@@ -19,7 +19,7 @@ import sys
 from datetime import datetime, timezone
 
 import anthropic
-from github import Github
+from github import Auth, Github
 
 from tools import (
     TOOL_DEFINITIONS,
@@ -58,7 +58,7 @@ def save_memory(memory: dict):
 
 def get_github() -> Github:
     token = os.environ["GITHUB_TOKEN"]
-    return Github(token)
+    return Github(auth=Auth.Token(token))
 
 def get_repo(gh: Github):
     owner = os.environ.get("REPO_OWNER", "trevorstenson")
