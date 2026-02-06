@@ -75,7 +75,11 @@ def find_winning_issue(repo):
 
     # Sort by thumbs-up reactions (GitHub API sort may not be exact)
     best = max(issue_list, key=lambda i: i.get_reactions().totalCount)
-    print(f"Winning issue #{best.number}: {best.title} ({best.get_reactions().totalCount} reactions)")
+    vote_count = best.get_reactions().totalCount
+    if vote_count == 0:
+        print("No issues have any votes yet. Nothing to build.")
+        return None
+    print(f"Winning issue #{best.number}: {best.title} ({vote_count} reactions)")
     return best
 
 def announce_build(repo, issue):
