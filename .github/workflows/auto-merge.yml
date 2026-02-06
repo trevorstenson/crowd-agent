@@ -3,6 +3,8 @@ name: Auto-Merge Agent PRs
 on:
   pull_request_review:
     types: [submitted]
+  pull_request:
+    types: [closed]
   schedule:
     - cron: '0 */6 * * *'  # Check every 6 hours for stale PRs
 
@@ -46,6 +48,26 @@ jobs:
             fi
           else
             echo "Not enough approvals or changes requested. Skipping."
+          fi
+
+  requeue-rejected:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    steps:
+      - name: Relabel issue back to voting
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+
+          # Find linked issue from PR body
+          ISSUE_NUMBER=$(gh pr view $PR_NUMBER --repo $REPO --json body \
+            --jq '.body' | grep -oP 'Closes #\K\d+' | head -1)
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "PR #$PR_NUMBER closed without merge. Relabeling issue #$ISSUE_NUMBER back to voting."
+            gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "voting" --remove-label "review,building"
           fi
 
   cleanup-stale:
