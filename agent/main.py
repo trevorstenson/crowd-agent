@@ -96,6 +96,11 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str]) -> str:
     # Git operations
     run_git("config", "user.name", "CrowdPilot[bot]")
     run_git("config", "user.email", "crowdpilot-bot@users.noreply.github.com")
+    # Delete branch if it already exists locally, then create fresh
+    try:
+        run_git("branch", "-D", branch_name)
+    except RuntimeError:
+        pass
     run_git("checkout", "-b", branch_name)
 
     # Stage all changed files
@@ -111,7 +116,7 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str]) -> str:
     name = os.environ.get("REPO_NAME", "crowd-agent")
     remote_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
     run_git("remote", "set-url", "origin", remote_url)
-    run_git("push", "--set-upstream", "origin", branch_name)
+    run_git("push", "--force", "--set-upstream", "origin", branch_name)
 
     # Create PR
     pr_body = (
