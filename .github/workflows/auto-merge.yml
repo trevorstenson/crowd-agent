@@ -1,0 +1,76 @@
+name: Auto-Merge Agent PRs
+
+on:
+  pull_request_review:
+    types: [submitted]
+  schedule:
+    - cron: '0 */6 * * *'  # Check every 6 hours for stale PRs
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check approvals and merge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+
+          # Get reviews
+          APPROVALS=$(gh api repos/$REPO/pulls/$PR_NUMBER/reviews \
+            --jq '[.[] | select(.state == "APPROVED")] | length')
+          CHANGES_REQUESTED=$(gh api repos/$REPO/pulls/$PR_NUMBER/reviews \
+            --jq '[.[] | select(.state == "CHANGES_REQUESTED")] | length')
+
+          echo "Approvals: $APPROVALS, Changes requested: $CHANGES_REQUESTED"
+
+          if [ "$APPROVALS" -ge 1 ] && [ "$CHANGES_REQUESTED" -eq 0 ]; then
+            echo "Merging PR #$PR_NUMBER"
+            gh pr merge $PR_NUMBER --repo $REPO --squash --delete-branch
+
+            # Find linked issue and label it shipped
+            ISSUE_NUMBER=$(gh pr view $PR_NUMBER --repo $REPO --json body \
+              --jq '.body' | grep -oP 'Closes #\K\d+' | head -1)
+
+            if [ -n "$ISSUE_NUMBER" ]; then
+              echo "Labeling issue #$ISSUE_NUMBER as shipped"
+              gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "shipped" --remove-label "review,building"
+              gh issue close $ISSUE_NUMBER --repo $REPO
+            fi
+          else
+            echo "Not enough approvals or changes requested. Skipping."
+          fi
+
+  cleanup-stale:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale agent PRs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO=${{ github.repository }}
+
+          # Find open PRs from the agent older than 48 hours
+          gh pr list --repo $REPO --state open --author "@me" --json number,createdAt \
+            --jq '.[] | select(
+              (now - (.createdAt | fromdateiso8601)) > 172800
+            ) | .number' | while read PR_NUMBER; do
+            echo "Closing stale PR #$PR_NUMBER"
+            gh pr close $PR_NUMBER --repo $REPO --comment "Closing: no approval received within 48 hours."
+
+            # Find linked issue and relabel
+            ISSUE_NUMBER=$(gh pr view $PR_NUMBER --repo $REPO --json body \
+              --jq '.body' | grep -oP 'Closes #\K\d+' | head -1)
+
+            if [ -n "$ISSUE_NUMBER" ]; then
+              gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "rejected" --remove-label "review,building"
+            fi
+          done
