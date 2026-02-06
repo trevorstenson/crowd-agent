@@ -68,6 +68,13 @@ jobs:
           if [ -n "$ISSUE_NUMBER" ]; then
             echo "PR #$PR_NUMBER closed without merge. Relabeling issue #$ISSUE_NUMBER back to voting."
             gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "voting" --remove-label "review,building"
+
+            # Reset all reactions on the issue so it starts fresh in the voting pool
+            echo "Resetting reactions on issue #$ISSUE_NUMBER"
+            gh api "repos/$REPO/issues/$ISSUE_NUMBER/reactions" --paginate \
+              --jq '.[].id' | while read REACTION_ID; do
+              gh api "repos/$REPO/issues/$ISSUE_NUMBER/reactions/$REACTION_ID" -X DELETE
+            done
           fi
 
   cleanup-stale:
