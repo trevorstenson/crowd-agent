@@ -52,10 +52,12 @@ function createIssueItem(issue, showVotes) {
   a.className = 'issue-item';
 
   if (showVotes) {
-    const reactions = issue.reactions?.['+1'] || 0;
+    const up = issue.reactions?.['+1'] || 0;
+    const down = issue.reactions?.['-1'] || 0;
+    const net = up - down;
     const voteEl = document.createElement('span');
-    voteEl.className = 'vote-count';
-    voteEl.textContent = `\u{1F44D} ${reactions}`;
+    voteEl.className = 'vote-count' + (net < 0 ? ' vote-negative' : net === 0 ? ' vote-zero' : '');
+    voteEl.textContent = (net > 0 ? '\u25B2 ' : net < 0 ? '\u25BC ' : '- ') + Math.abs(net);
     a.appendChild(voteEl);
   }
 
@@ -85,8 +87,12 @@ async function loadVotingIssues() {
       return;
     }
 
-    // Sort by thumbs-up reactions
-    issues.sort((a, b) => (b.reactions?.['+1'] || 0) - (a.reactions?.['+1'] || 0));
+    // Sort by net votes (upvotes minus downvotes)
+    issues.sort((a, b) => {
+      const netA = (a.reactions?.['+1'] || 0) - (a.reactions?.['-1'] || 0);
+      const netB = (b.reactions?.['+1'] || 0) - (b.reactions?.['-1'] || 0);
+      return netB - netA;
+    });
 
     for (const issue of issues) {
       container.appendChild(createIssueItem(issue, true));
