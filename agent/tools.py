@@ -120,7 +120,11 @@ def execute_tool(name: str, inputs: dict) -> str:
     """Execute a tool by name with the given inputs."""
     if name not in TOOL_FUNCTIONS:
         return f"Error: Unknown tool: {name}"
-    return TOOL_FUNCTIONS[name](**inputs)
+    # Filter inputs to only accepted parameters to handle hallucinated kwargs
+    schema = next(t for t in TOOL_DEFINITIONS if t["name"] == name)
+    valid_keys = set(schema["input_schema"].get("properties", {}).keys())
+    filtered = {k: v for k, v in inputs.items() if k in valid_keys}
+    return TOOL_FUNCTIONS[name](**filtered)
 
 
 def get_file_changes() -> dict[str, str]:
