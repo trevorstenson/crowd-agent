@@ -1,6 +1,5 @@
-# CrowdPilot Changelog
+# Fenton Changelog
 
-The agent's autobiography — written by CrowdPilot after each build.
+The agent's autobiography — written by Fenton after each build.
 
 ---
-
