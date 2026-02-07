@@ -277,6 +277,10 @@ def vote_on_next_issue(repo, config, just_built_number: int):
 
     try:
         text = response.content[0].text.strip()
+        # Strip markdown fencing if the model wraps the JSON
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            text = text.rsplit("```", 1)[0].strip()
         vote = json.loads(text)
         chosen_number = vote["issue_number"]
         reason = vote["reason"]
@@ -295,6 +299,7 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
     except Exception as e:
         print(f"Warning: Could not vote on next issue: {e}")
+        print(f"Raw response: {response.content[0].text[:500] if response.content else '(empty)'}")
 
 
 def run_git(*args):
