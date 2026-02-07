@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   auto-merge:
-    if: github.event_name == 'pull_request_review'
+    if: github.event_name == 'pull_request_review' && startsWith(github.event.pull_request.head.ref, 'agent/')
     runs-on: ubuntu-latest
     steps:
       - name: Check approvals and merge
@@ -124,7 +124,7 @@ jobs:
 
   # Handles direct merges (not via the auto-merge job above)
   post-merge:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'agent/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -218,7 +218,7 @@ jobs:
           git push
 
   requeue-rejected:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'agent/')
     runs-on: ubuntu-latest
     steps:
       - name: Relabel issue back to voting
