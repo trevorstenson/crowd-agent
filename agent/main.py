@@ -4,8 +4,8 @@ Crowd Agent — The Evolving Build Loop
 This script runs nightly via GitHub Actions. It:
 1. Finds the top-voted issue labeled 'voting'
 2. Announces the build on the issue
-3. Calls the Claude API to create a plan
-4. Calls the Claude API with tool use to implement the plan
+3. Calls the Groq API to create a plan
+4. Calls the Groq API with tool use to implement the plan
 5. Creates a branch and PR with the changes
 6. Reports the result
 
@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Optional
 
-import anthropic
+import openai
 from github import Auth, Github
 from tenacity import (
     retry,
@@ -117,7 +117,7 @@ def classify_api_error(exception: Exception) -> str:
 # --- Retry Decorators ---
 
 def retry_on_transient_api_error(func):
-    """Decorator to retry Claude API calls on transient failures with exponential backoff."""
+    """Decorator to retry API calls on transient failures with exponential backoff."""
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=1, max=30),
@@ -338,7 +338,10 @@ def report_failure(repo, issue, error: str):
 
 def generate_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None) -> str:
     """Ask the agent to write a changelog entry. Returns the formatted markdown entry."""
-    client = anthropic.Anthropic()
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ.get("GROQ_API_KEY"),
+    )
 
     if success:
         prompt = (
@@ -364,14 +367,14 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
             "Return ONLY the entry text, no heading or date."
         )
 
-    response = client.messages.create(
+    response = client.chat.completions.create(
         model=config["model"],
         max_tokens=300,
         temperature=0.7,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    entry_text = response.content[0].text.strip()
+    entry_text = response.choices[0].message.content.strip()
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     status_emoji = "+" if success else "x"
 
@@ -433,8 +436,11 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         '{"issue_number": <number>, "reason": "<1-2 sentence explanation>"}'
     )
 
-    client = anthropic.Anthropic()
-    response = client.messages.create(
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ.get("GROQ_API_KEY"),
+    )
+    response = client.chat.completions.create(
         model=config["model"],
         max_tokens=256,
         temperature=0,
@@ -442,7 +448,7 @@ def vote_on_next_issue(repo, config, just_built_number: int):
     )
 
     try:
-        text = response.content[0].text.strip()
+        text = response.choices[0].message.content.strip()
         # Strip markdown fencing if the model wraps the JSON
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -465,7 +471,7 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
     except Exception as e:
         print(f"Warning: Could not vote on next issue: {e}")
-        print(f"Raw response: {response.content[0].text[:500] if response.content else '(empty)'}")
+        print(f"Raw response: {response.choices[0].message.content[:500] if response.choices else '(empty)'}")
 
 
 def run_git(*args):
@@ -510,13 +516,16 @@ def get_repo_file_list() -> list[str]:
 
 @retry_on_transient_api_error
 def create_plan(issue, repo_files: list[str], config: dict) -> str:
-    """Ask Claude to create a plan for implementing the issue.
-    
+    """Ask the LLM to create a plan for implementing the issue.
+
     Returns the plan as a string.
     Retries on transient API errors.
     """
-    client = anthropic.Anthropic()
-    
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ.get("GROQ_API_KEY"),
+    )
+
     prompt = (
         f"## Task\n\nCreate a detailed plan for implementing this GitHub issue:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n"
@@ -536,25 +545,28 @@ def create_plan(issue, repo_files: list[str], config: dict) -> str:
         "Be specific and concrete. This plan will guide your implementation."
     )
     
-    response = client.messages.create(
+    response = client.chat.completions.create(
         model=config["model"],
         max_tokens=2000,
         temperature=0.3,
         messages=[{"role": "user", "content": prompt}],
     )
-    
-    plan = response.content[0].text.strip()
+
+    plan = response.choices[0].message.content.strip()
     print(f"Plan created:\n{plan[:500]}...\n")
     return plan
 
 def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
-    """Run the agent loop: call Claude with tools until done. Returns file changes.
-    
+    """Run the agent loop: call the LLM with tools until done. Returns file changes.
+
     The agent is given the plan upfront to guide its implementation.
     Includes timeout protection and graceful error handling for tool execution.
     """
     reset_file_changes()
-    client = anthropic.Anthropic()
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.environ.get("GROQ_API_KEY"),
+    )
     error_config = config.get("error_handling", {})
     timeout_seconds = error_config.get("agent_loop_timeout_seconds", 300)
 
@@ -566,64 +578,59 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
     )
 
     messages = [
-        {"role": "user", "content": prompt_text}
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt_text},
     ]
 
     with TimeoutHandler(timeout_seconds) as timeout_handler:
         for turn in range(config["max_turns"]):
             # Check timeout before each turn
             timeout_handler.check()
-            
+
             print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
 
             try:
-                response = client.messages.create(
+                response = client.chat.completions.create(
                     model=config["model"],
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
-                    system=system_prompt,
                     messages=messages,
                     tools=TOOL_DEFINITIONS,
                 )
-            except anthropic.RateLimitError as e:
+            except openai.RateLimitError as e:
                 logger.warning(f"Rate limit error on turn {turn + 1}, retrying: {e}")
                 time.sleep(2)
                 continue
-            except anthropic.APITimeoutError as e:
+            except openai.APITimeoutError as e:
                 logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
                 time.sleep(2)
                 continue
-            except anthropic.APIError as e:
+            except openai.APIError as e:
                 logger.error(f"API error on turn {turn + 1}: {e}")
                 raise
 
-            # Collect assistant content
-            assistant_content = response.content
-            messages.append({"role": "assistant", "content": assistant_content})
+            message = response.choices[0].message
+            messages.append(message)
 
             # Check if done
-            if response.stop_reason == "end_turn":
-                # Extract final text
-                for block in assistant_content:
-                    if hasattr(block, "text"):
-                        print(f"Agent summary: {block.text[:200]}...")
+            if response.choices[0].finish_reason == "stop":
+                if message.content:
+                    print(f"Agent summary: {message.content[:200]}...")
                 break
 
             # Process tool calls
-            tool_results = []
-            for block in assistant_content:
-                if block.type == "tool_use":
-                    print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
-                    result = execute_tool_safely(block.name, block.input)
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+                    result = execute_tool_safely(name, args)
                     print(f"  Result: {result[:100]}...")
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
                         "content": result,
                     })
-
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
         else:
             logger.warning("Agent reached max turns without finishing.")
 
@@ -676,7 +683,7 @@ def main():
         except RetryError as e:
             raise RuntimeError(f"Failed to create plan after max retries: {e}")
 
-        # Step 5-6: Run the agent loop with the plan (calls Claude, executes tools)
+        # Step 5-6: Run the agent loop with the plan
         try:
             changes = run_agent(issue, repo_files, config, system_prompt, plan)
         except AgentLoopTimeout as e:

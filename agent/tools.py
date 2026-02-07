@@ -134,77 +134,86 @@ def search_files(pattern: str, case_sensitive: bool = False, max_results: int = 
     })
 
 
-# Tool definitions for the Claude API
+# Tool definitions for the OpenAI-compatible API (Groq)
 TOOL_DEFINITIONS = [
     {
-        "name": "read_file",
-        "description": "Read the contents of a file in the repository.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file relative to the repository root."
-                }
-            },
-            "required": ["path"]
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file in the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the repository root."
+                    }
+                },
+                "required": ["path"]
+            }
         }
     },
     {
-        "name": "write_file",
-        "description": "Write or overwrite a file in the repository.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file relative to the repository root."
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write or overwrite a file in the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the repository root."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The full content to write to the file."
+                    }
                 },
-                "content": {
-                    "type": "string",
-                    "description": "The full content to write to the file."
-                }
-            },
-            "required": ["path", "content"]
+                "required": ["path", "content"]
+            }
         }
     },
     {
-        "name": "list_files",
-        "description": "List files and directories in a given directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "directory": {
-                    "type": "string",
-                    "description": "Path to the directory relative to the repository root. Defaults to root.",
-                    "default": "."
-                }
-            },
-            "required": []
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List files and directories in a given directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "Path to the directory relative to the repository root. Defaults to root."
+                    }
+                },
+                "required": []
+            }
         }
     },
     {
-        "name": "search_files",
-        "description": "Search for text patterns across the repository. Useful for discovering relevant code when you don't know the exact file location.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Text or regex pattern to search for. Supports regex syntax."
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search for text patterns across the repository. Useful for discovering relevant code when you don't know the exact file location.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text or regex pattern to search for. Supports regex syntax."
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether to match case. Default is false (case-insensitive)."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return. Default is 20."
+                    }
                 },
-                "case_sensitive": {
-                    "type": "boolean",
-                    "description": "Whether to match case. Default is false (case-insensitive).",
-                    "default": False
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return. Default is 20.",
-                    "default": 20
-                }
-            },
-            "required": ["pattern"]
+                "required": ["pattern"]
+            }
         }
     }
 ]
@@ -223,9 +232,9 @@ def execute_tool(name: str, inputs: dict) -> str:
     if name not in TOOL_FUNCTIONS:
         return f"Error: Unknown tool: {name}"
     # Validate and filter inputs against schema
-    schema = next(t for t in TOOL_DEFINITIONS if t["name"] == name)
-    valid_keys = set(schema["input_schema"].get("properties", {}).keys())
-    required_keys = set(schema["input_schema"].get("required", []))
+    schema = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == name)
+    valid_keys = set(schema["function"]["parameters"].get("properties", {}).keys())
+    required_keys = set(schema["function"]["parameters"].get("required", []))
     filtered = {k: v for k, v in inputs.items() if k in valid_keys}
     missing = required_keys - set(filtered.keys())
     if missing:
