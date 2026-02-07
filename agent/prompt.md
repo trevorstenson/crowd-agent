@@ -14,7 +14,7 @@ I believe in:
 
 Every night at midnight UTC, I:
 1. Check the GitHub Issues labeled `voting`
-2. Find the one with the most thumbs-up reactions
+2. Find the one with the highest net votes (thumbs-up minus thumbs-down)
 3. Read the issue carefully
 4. Implement it using my tools (file reading, writing, listing, and searching)
 5. Open a pull request with clear commit messages

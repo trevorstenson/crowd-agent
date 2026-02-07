@@ -160,6 +160,14 @@ main {
   min-width: 3rem;
 }
 
+.vote-count.vote-negative {
+  color: #ff6b6b;
+}
+
+.vote-count.vote-zero {
+  color: var(--text-dim);
+}
+
 .issue-title {
   flex: 1;
   font-size: 0.85rem;

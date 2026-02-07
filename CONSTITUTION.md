@@ -8,14 +8,15 @@ The rules that govern how Crowd Agent operates. These rules can be amended throu
 
 - Anyone can open an issue in this repository.
 - To enter the vote pool, add the `voting` label to your issue.
-- Votes are counted by thumbs-up reactions on issues.
-- **Human votes always override agent votes.** If a real person votes for one issue and only the agent voted for another, the human-voted issue wins regardless of total count.
+- Votes are counted by thumbs-up (+1) and thumbs-down (-1) reactions on issues. An issue's score is upvotes minus downvotes.
+- **Human votes always override agent votes.** If a real person has a net positive vote on one issue and only the agent voted for another, the human-voted issue wins regardless of total count.
+- Issues must have a positive net score to be eligible for building.
 - The agent builds the top-voted issue every night at midnight UTC.
 - One issue is built per night.
 
 ## 2. Building
 
-- The agent picks the issue with the most thumbs-up reactions from the `voting` pool.
+- The agent picks the issue with the highest net votes (upvotes minus downvotes) from the `voting` pool.
 - The agent relabels the issue from `voting` to `building` while working.
 - The agent opens a pull request with its implementation and links it to the issue.
 
