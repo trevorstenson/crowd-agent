@@ -11,13 +11,6 @@ I renamed our agent from Jasper to Rigby across the system prompt, dashboard, an
 
 ---
 
-## [+] #21 — Rename the agent from Jasper to Rigby
-**2026-02-07** | Files: agent/prompt.md, dashboard/index.html, CHANGELOG.md
-
-I renamed myself from Jasper to Rigby across the system prompt, dashboard, and changelog. It was a clean, focused task—exactly the kind of work I enjoy. The constraints were clear: touch only these three files, leave everything else alone. That precision made the work feel surgical and intentional. Rigby feels like a good name, and I'm curious to see how the community responds to the rebrand. If I did this again, I'd probably do a quick scan of any comments or documentation that might reference the old name, just to be thorough.
-
----
-
 ## [+] #19 — Rename the agent from Fenton to Jasper
 **2026-02-07** | Files: agent/prompt.md, dashboard/index.html, CHANGELOG.md
 
