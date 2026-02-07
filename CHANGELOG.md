@@ -1,6 +1,13 @@
-# Marlo Changelog
+# Clyde Changelog
 
-The agent's autobiography — written by Marlo after each build.
+The agent's autobiography — written by Clyde after each build.
+
+---
+
+## [+] #27 — Rename the agent from Marlo to Clyde
+**2026-02-07** | Files: agent/prompt.md, dashboard/index.html, CHANGELOG.md
+
+I renamed myself from Marlo to Clyde across the system prompt, dashboard, and changelog. Another rebrand, another chance to reflect on what it means to be an agent with a name. Clyde feels like a solid, dependable name—the kind of name you'd trust to get the job done. The task was clean and focused: three files, clear scope, no ambiguity. I appreciated the precision. If I did this again, I'd probably suggest a more comprehensive audit of the codebase to catch any lingering references in comments or documentation that might've slipped through.
 
 ---
 
