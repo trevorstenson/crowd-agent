@@ -200,7 +200,7 @@ def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
 # --- GitHub Helpers ---
 
 def get_github() -> Github:
-    token = os.environ["GITHUB_TOKEN"]
+    token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_PAT", ""))
     return Github(auth=Auth.Token(token))
 
 def get_repo(gh: Github):
@@ -278,8 +278,8 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str], changelog_text: s
     commit_msg = f"feat: implement #{issue.number} — {issue.title}"
     run_git("commit", "-m", commit_msg)
 
-    # Push using the GITHUB_TOKEN
-    token = os.environ["GITHUB_TOKEN"]
+    # Push using the GH_PAT (personal access token) so it can trigger other workflows
+    token = os.environ.get("GH_PAT", os.environ["GITHUB_TOKEN"])
     owner = os.environ.get("REPO_OWNER", "trevorstenson")
     name = os.environ.get("REPO_NAME", "crowd-agent")
     remote_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
