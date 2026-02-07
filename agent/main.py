@@ -166,6 +166,60 @@ def report_failure(repo, issue, error: str):
             labels=["bug"],
         )
 
+def vote_on_next_issue(repo, config, just_built_number: int):
+    """After a build, the agent reviews the voting pool and votes on what to build next."""
+    issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
+    issue_list = [i for i in issues if i.number != just_built_number]
+    if not issue_list:
+        print("No other voting issues to vote on.")
+        return
+
+    # Build a summary of the voting pool
+    issue_summaries = []
+    for i in issue_list:
+        reactions = i.get_reactions().totalCount
+        issue_summaries.append(f"- #{i.number}: {i.title} ({reactions} votes)\n  {i.body or '(no description)'}")
+
+    prompt = (
+        "You just finished a build. Now review the remaining issues in the voting pool "
+        "and pick the ONE issue you think should be built next. Consider: feasibility, "
+        "impact on the project, how interesting it would be for the community, and whether "
+        "it builds on recent work.\n\n"
+        "## Voting Pool\n\n" + "\n\n".join(issue_summaries) + "\n\n"
+        "Respond with ONLY a JSON object (no markdown fencing):\n"
+        '{"issue_number": <number>, "reason": "<1-2 sentence explanation>"}'
+    )
+
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=config["model"],
+        max_tokens=256,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    try:
+        text = response.content[0].text.strip()
+        vote = json.loads(text)
+        chosen_number = vote["issue_number"]
+        reason = vote["reason"]
+
+        # Find the chosen issue and react + comment
+        for i in issue_list:
+            if i.number == chosen_number:
+                i.create_reaction("+1")
+                i.create_comment(
+                    f"**CrowdPilot's vote:** I think this should be built next.\n\n"
+                    f"_{reason}_"
+                )
+                print(f"Voted on issue #{chosen_number}: {reason}")
+                return
+
+        print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
+    except Exception as e:
+        print(f"Warning: Could not vote on next issue: {e}")
+
+
 def run_git(*args):
     """Run a git command in the repo directory."""
     result = subprocess.run(
@@ -298,6 +352,12 @@ def main():
 
         # Step 7: Report the result
         report_result(issue, pr_url)
+
+        # Step 8: Vote on what to build next
+        try:
+            vote_on_next_issue(repo, config, issue.number)
+        except Exception as e:
+            print(f"Warning: Could not vote on next issue: {e}")
 
         # Update memory
         memory["total_builds"] += 1
