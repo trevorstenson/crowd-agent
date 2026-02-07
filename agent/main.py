@@ -281,7 +281,7 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str], changelog_text: s
     run_git("commit", "-m", commit_msg)
 
     # Push using the GH_PAT (personal access token) so it can trigger other workflows
-    token = os.environ.get("GH_PAT", os.environ["GITHUB_TOKEN"])
+    token = os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN", "")
     owner = os.environ.get("REPO_OWNER", "trevorstenson")
     name = os.environ.get("REPO_NAME", "crowd-agent")
     remote_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
