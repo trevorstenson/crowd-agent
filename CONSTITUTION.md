@@ -10,7 +10,7 @@ The rules that govern how Crowd Agent operates. These rules can be amended throu
 - To enter the vote pool, add the `voting` label to your issue.
 - Votes are counted by thumbs-up (+1) and thumbs-down (-1) reactions on issues. An issue's score is upvotes minus downvotes.
 - **Human votes always override agent votes.** If a real person has a net positive vote on one issue and only the agent voted for another, the human-voted issue wins regardless of total count.
-- Issues must have a positive net score to be eligible for building.
+- If all issues are tied, the oldest issue wins.
 - The agent builds the top-voted issue every night at midnight UTC.
 - One issue is built per night.
 

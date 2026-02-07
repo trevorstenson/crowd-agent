@@ -230,7 +230,8 @@ def find_winning_issue(repo, gh: Github):
 
     Net votes = thumbs-up minus thumbs-down. Human votes always take priority
     over agent votes. An issue with positive human net votes will beat an issue
-    that only has the agent's vote.
+    that only has the agent's vote. Ties are broken by oldest issue first.
+    Always builds something if there are voting issues.
     """
     issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
     issue_list = list(issues)
@@ -241,12 +242,9 @@ def find_winning_issue(repo, gh: Github):
     # Identify the bot account so we can separate human vs agent votes
     bot_login = gh.get_user().login
 
-    # Score issues: human net votes first, then total net votes as tiebreaker
+    # Score issues: human net votes first, then total net votes, then oldest issue as tiebreaker
     scored = [(issue, _count_votes(issue, bot_login)) for issue in issue_list]
-    best, (human_net, total_net) = max(scored, key=lambda x: x[1])
-    if total_net <= 0:
-        print("No issues have a positive net vote score. Nothing to build.")
-        return None
+    best, (human_net, total_net) = max(scored, key=lambda x: (*x[1], -x[0].created_at.timestamp()))
     print(f"Winning issue #{best.number}: {best.title} ({human_net} human net, {total_net} total net votes)")
     return best
 
