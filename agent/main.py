@@ -27,6 +27,7 @@ from tools import (
     get_file_changes,
     reset_file_changes,
 )
+from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
 
 # --- Configuration ---
 
@@ -415,6 +416,15 @@ def main():
         # Step 2: Announce the build
         announce_build(repo, issue)
 
+        # Tweet about the build starting
+        try:
+            owner = os.environ.get("REPO_OWNER", "trevorstenson")
+            name = os.environ.get("REPO_NAME", "crowd-agent")
+            dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
+            tweet_build_start(issue.title, issue.number, owner, name, dry_run=dry_run)
+        except Exception as e:
+            print(f"Warning: Could not tweet build start: {e}")
+
         # Step 3: Get repo context
         repo_files = get_repo_file_list()
 
@@ -436,6 +446,13 @@ def main():
 
         # Step 8: Report the result
         report_result(issue, pr_url)
+
+        # Tweet about the build result
+        try:
+            dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
+            tweet_build_success(issue.title, pr_url, dry_run=dry_run)
+        except Exception as e:
+            print(f"Warning: Could not tweet build success: {e}")
 
         # Step 9: Vote on what to build next
         try:
@@ -464,6 +481,16 @@ def main():
             report_failure(repo, issue, str(e))
         except Exception as report_err:
             print(f"Failed to report failure: {report_err}")
+
+        # Tweet about the build failure
+        if issue:
+            try:
+                owner = os.environ.get("REPO_OWNER", "trevorstenson")
+                name = os.environ.get("REPO_NAME", "crowd-agent")
+                dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
+                tweet_build_failure(issue.title, issue.number, owner, name, dry_run=dry_run)
+            except Exception as twit_err:
+                print(f"Warning: Could not tweet build failure: {twit_err}")
 
         sys.exit(1)
 
