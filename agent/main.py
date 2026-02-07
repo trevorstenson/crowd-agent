@@ -450,7 +450,10 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
         for block in assistant_content:
             if block.type == "tool_use":
                 print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
-                result = execute_tool(block.name, block.input)
+                try:
+                    result = execute_tool(block.name, block.input)
+                except Exception as e:
+                    result = f"Error: {e}"
                 print(f"  Result: {result[:100]}...")
                 tool_results.append({
                     "type": "tool_result",
