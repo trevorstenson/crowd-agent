@@ -14,13 +14,24 @@ how the agent works, what tools it has, and how it makes decisions.
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
+from functools import wraps
+from typing import Optional
 
 import anthropic
 from github import Auth, Github
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    RetryError,
+)
 
 from tools import (
     TOOL_DEFINITIONS,
@@ -29,6 +40,32 @@ from tools import (
     reset_file_changes,
 )
 from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
+
+# --- Logging Setup ---
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# --- Custom Exceptions ---
+
+class TransientAPIError(Exception):
+    """Raised for transient API errors (rate limit, timeout)."""
+    pass
+
+class PermanentAPIError(Exception):
+    """Raised for permanent API errors (auth, invalid request)."""
+    pass
+
+class ToolExecutionError(Exception):
+    """Raised when a tool execution fails."""
+    pass
+
+class AgentLoopTimeout(Exception):
+    """Raised when agent loop exceeds timeout."""
+    pass
 
 # --- Configuration ---
 
@@ -55,6 +92,110 @@ def save_memory(memory: dict):
         json.dump(memory, f, indent=2)
         f.write("\n")
 
+# --- Error Classification ---
+
+def classify_api_error(exception: Exception) -> str:
+    """Classify API error as transient or permanent.
+    
+    Returns:
+        'transient' — retry-able error (rate limit, timeout, server error)
+        'permanent' — non-retry-able error (auth, invalid request)
+        'unknown' — unclassified error
+    """
+    error_str = str(exception).lower()
+    
+    # Transient errors
+    if any(x in error_str for x in ['rate limit', '429', 'timeout', '503', '502', 'overloaded']):
+        return 'transient'
+    
+    # Permanent errors
+    if any(x in error_str for x in ['unauthorized', '401', 'invalid', '400', 'authentication']):
+        return 'permanent'
+    
+    return 'unknown'
+
+# --- Retry Decorators ---
+
+def retry_on_transient_api_error(func):
+    """Decorator to retry Claude API calls on transient failures with exponential backoff."""
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=1, max=30),
+        retry=retry_if_exception_type(TransientAPIError),
+        reraise=True,
+    )
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except TransientAPIError:
+            raise
+        except Exception as e:
+            error_type = classify_api_error(e)
+            
+            if error_type == 'transient':
+                logger.warning(f"Transient API error, will retry: {e}")
+                raise TransientAPIError(str(e)) from e
+            elif error_type == 'permanent':
+                logger.error(f"Permanent API error, failing fast: {e}")
+                raise PermanentAPIError(str(e)) from e
+            else:
+                logger.error(f"Unknown API error: {e}")
+                raise
+    
+    return wrapper
+
+# --- Timeout Handler ---
+
+class TimeoutHandler:
+    """Context manager for enforcing timeout on agent loop."""
+    
+    def __init__(self, timeout_seconds: int):
+        self.timeout_seconds = timeout_seconds
+        self.start_time = None
+    
+    def __enter__(self):
+        self.start_time = time.time()
+        logger.info(f"Starting agent loop with {self.timeout_seconds}s timeout")
+        return self
+    
+    def __exit__(self, *args):
+        elapsed = time.time() - self.start_time
+        logger.info(f"Agent loop completed in {elapsed:.1f}s")
+    
+    def check(self):
+        """Raise AgentLoopTimeout if timeout exceeded."""
+        if self.start_time is None:
+            return
+        elapsed = time.time() - self.start_time
+        if elapsed > self.timeout_seconds:
+            raise AgentLoopTimeout(
+                f"Agent loop exceeded {self.timeout_seconds}s timeout (elapsed: {elapsed:.1f}s)"
+            )
+
+# --- Tool Execution with Error Handling ---
+
+def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
+    """Execute a tool with error handling and logging.
+    
+    Returns:
+        Tool result as string (errors are formatted as error messages)
+    """
+    try:
+        logger.info(f"Executing tool: {tool_name} with input: {json.dumps(tool_input)[:100]}")
+        result = execute_tool(tool_name, tool_input)
+        
+        # Check if result is an error message
+        if isinstance(result, str) and result.startswith("Error"):
+            logger.warning(f"Tool {tool_name} returned error: {result}")
+        else:
+            logger.info(f"Tool {tool_name} executed successfully")
+        
+        return result
+    
+    except Exception as e:
+        error_msg = f"Error executing {tool_name}: {e}"
+        logger.error(error_msg, exc_info=True)
+        return error_msg
 
 # --- GitHub Helpers ---
 
@@ -365,10 +506,12 @@ def get_repo_file_list() -> list[str]:
     except Exception:
         return []
 
+@retry_on_transient_api_error
 def create_plan(issue, repo_files: list[str], config: dict) -> str:
     """Ask Claude to create a plan for implementing the issue.
     
     Returns the plan as a string.
+    Retries on transient API errors.
     """
     client = anthropic.Anthropic()
     
@@ -406,9 +549,12 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
     """Run the agent loop: call Claude with tools until done. Returns file changes.
     
     The agent is given the plan upfront to guide its implementation.
+    Includes timeout protection and graceful error handling for tool execution.
     """
     reset_file_changes()
     client = anthropic.Anthropic()
+    error_config = config.get("error_handling", {})
+    timeout_seconds = error_config.get("agent_loop_timeout_seconds", 300)
 
     # Build the prompt with the plan included
     prompt_text = build_prompt(issue, repo_files)
@@ -421,50 +567,63 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
         {"role": "user", "content": prompt_text}
     ]
 
-    for turn in range(config["max_turns"]):
-        print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
+    with TimeoutHandler(timeout_seconds) as timeout_handler:
+        for turn in range(config["max_turns"]):
+            # Check timeout before each turn
+            timeout_handler.check()
+            
+            print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
 
-        response = client.messages.create(
-            model=config["model"],
-            max_tokens=config["max_tokens"],
-            temperature=config["temperature"],
-            system=system_prompt,
-            messages=messages,
-            tools=TOOL_DEFINITIONS,
-        )
+            try:
+                response = client.messages.create(
+                    model=config["model"],
+                    max_tokens=config["max_tokens"],
+                    temperature=config["temperature"],
+                    system=system_prompt,
+                    messages=messages,
+                    tools=TOOL_DEFINITIONS,
+                )
+            except anthropic.RateLimitError as e:
+                logger.warning(f"Rate limit error on turn {turn + 1}, retrying: {e}")
+                time.sleep(2)
+                continue
+            except anthropic.APITimeoutError as e:
+                logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
+                time.sleep(2)
+                continue
+            except anthropic.APIError as e:
+                logger.error(f"API error on turn {turn + 1}: {e}")
+                raise
 
-        # Collect assistant content
-        assistant_content = response.content
-        messages.append({"role": "assistant", "content": assistant_content})
+            # Collect assistant content
+            assistant_content = response.content
+            messages.append({"role": "assistant", "content": assistant_content})
 
-        # Check if done
-        if response.stop_reason == "end_turn":
-            # Extract final text
+            # Check if done
+            if response.stop_reason == "end_turn":
+                # Extract final text
+                for block in assistant_content:
+                    if hasattr(block, "text"):
+                        print(f"Agent summary: {block.text[:200]}...")
+                break
+
+            # Process tool calls
+            tool_results = []
             for block in assistant_content:
-                if hasattr(block, "text"):
-                    print(f"Agent summary: {block.text[:200]}...")
-            break
+                if block.type == "tool_use":
+                    print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
+                    result = execute_tool_safely(block.name, block.input)
+                    print(f"  Result: {result[:100]}...")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
 
-        # Process tool calls
-        tool_results = []
-        for block in assistant_content:
-            if block.type == "tool_use":
-                print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
-                try:
-                    result = execute_tool(block.name, block.input)
-                except Exception as e:
-                    result = f"Error: {e}"
-                print(f"  Result: {result[:100]}...")
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
-    else:
-        print("Agent reached max turns without finishing.")
+            if tool_results:
+                messages.append({"role": "user", "content": tool_results})
+        else:
+            logger.warning("Agent reached max turns without finishing.")
 
     return get_file_changes()
 
@@ -500,16 +659,26 @@ def main():
             dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
             tweet_build_start(issue.title, issue.number, owner, name, dry_run=dry_run)
         except Exception as e:
-            print(f"Warning: Could not tweet build start: {e}")
+            logger.warning(f"Could not tweet build start: {e}")
 
         # Step 3: Get repo context
         repo_files = get_repo_file_list()
 
         # Step 4: Create a plan before implementing
-        plan = create_plan(issue, repo_files, config)
+        try:
+            plan = create_plan(issue, repo_files, config)
+        except PermanentAPIError as e:
+            raise RuntimeError(f"Failed to create plan (permanent error): {e}")
+        except TransientAPIError as e:
+            raise RuntimeError(f"Failed to create plan after retries (transient error): {e}")
+        except RetryError as e:
+            raise RuntimeError(f"Failed to create plan after max retries: {e}")
 
         # Step 5-6: Run the agent loop with the plan (calls Claude, executes tools)
-        changes = run_agent(issue, repo_files, config, system_prompt, plan)
+        try:
+            changes = run_agent(issue, repo_files, config, system_prompt, plan)
+        except AgentLoopTimeout as e:
+            raise RuntimeError(f"Agent loop timeout: {e}")
 
         if not changes:
             raise RuntimeError("Agent made no file changes.")
@@ -519,7 +688,7 @@ def main():
         try:
             changelog_text = generate_changelog_entry(config, issue, changes, success=True)
         except Exception as e:
-            print(f"Warning: Could not generate changelog: {e}")
+            logger.warning(f"Could not generate changelog: {e}")
 
         # Step 8: Create branch and PR (with changelog embedded in body)
         pr_url = create_branch_and_pr(repo, issue, changes, changelog_text=changelog_text)
@@ -532,17 +701,18 @@ def main():
             dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
             tweet_build_success(issue.title, pr_url, dry_run=dry_run)
         except Exception as e:
-            print(f"Warning: Could not tweet build success: {e}")
+            logger.warning(f"Could not tweet build success: {e}")
 
         # Step 10: Vote on what to build next
         try:
             vote_on_next_issue(repo, config, issue.number)
         except Exception as e:
-            print(f"Warning: Could not vote on next issue: {e}")
+            logger.warning(f"Could not vote on next issue: {e}")
 
         print("Build completed successfully!")
 
     except Exception as e:
+        logger.error(f"Build failed: {e}", exc_info=True)
         print(f"Build failed: {e}")
         memory["total_builds"] += 1
         memory["failed_builds"] += 1
@@ -555,12 +725,12 @@ def main():
             try:
                 write_changelog_entry(config, issue, {}, success=False, error=str(e))
             except Exception as changelog_err:
-                print(f"Warning: Could not write changelog: {changelog_err}")
+                logger.warning(f"Could not write changelog: {changelog_err}")
 
         try:
             report_failure(repo, issue, str(e))
         except Exception as report_err:
-            print(f"Failed to report failure: {report_err}")
+            logger.error(f"Failed to report failure: {report_err}")
 
         # Tweet about the build failure
         if issue:
@@ -570,7 +740,7 @@ def main():
                 dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
                 tweet_build_failure(issue.title, issue.number, owner, name, dry_run=dry_run)
             except Exception as twit_err:
-                print(f"Warning: Could not tweet build failure: {twit_err}")
+                logger.warning(f"Could not tweet build failure: {twit_err}")
 
         sys.exit(1)
 
