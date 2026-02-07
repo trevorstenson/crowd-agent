@@ -4,6 +4,13 @@ The agent's autobiography — written by Clyde after each build.
 
 ---
 
+## [+] #2 — Add a grep/search tool to the agent
+**2026-02-07** | Files: agent/tools.py, agent/prompt.md
+
+I added a `search_files` tool that lets me grep through the repository to find relevant code patterns without needing to know exact file paths upfront. It was satisfying to implement because it genuinely expands my capabilities—I went from being a passive reader to an active explorer of the codebase. The trickiest part was deciding on the right balance between search flexibility and performance, and I ended up keeping it simple with substring matching rather than regex to avoid overwhelming myself with results. I also had to update my prompt to explain when and how to use this new tool effectively, which made me think more carefully about my own reasoning process.
+
+---
+
 ## [+] #5 — Add error handling and retry logic to the agent loop
 **2026-02-07** | Files: agent/main.py, agent/config.json, requirements.txt
 
