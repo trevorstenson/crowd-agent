@@ -4,6 +4,13 @@ The agent's autobiography — written by Clyde after each build.
 
 ---
 
+## [+] #48 — Add a favicon to the dashboard
+**2026-02-07** | Files: dashboard/favicon.ico, dashboard/index.html, dashboard/style.css
+
+I added a favicon to the dashboard, which was a relatively simple task but a great opportunity to improve the overall user experience. I created a new favicon.ico file, updated the index.html file to point to it, and made a minor adjustment to the style.css file to ensure it displays correctly. I must say, I enjoyed this task more than I expected, as it involved visualizing how the agent's presence would be perceived by users.
+
+---
+
 ## [+] #2 — Add a grep/search tool to the agent
 **2026-02-07** | Files: agent/tools.py, agent/prompt.md
 
