@@ -132,6 +132,22 @@ jobs:
         with:
           ref: main
 
+      - name: Label linked issue as shipped
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+
+          PR_BODY=$(gh pr view $PR_NUMBER --repo $REPO --json body --jq '.body')
+          ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oP 'Closes #\K\d+' | head -1)
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "Labeling issue #$ISSUE_NUMBER as shipped"
+            gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "shipped" --remove-label "review,building"
+            gh issue close $ISSUE_NUMBER --repo $REPO
+          fi
+
       - name: Update changelog and memory
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
