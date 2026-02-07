@@ -605,6 +605,16 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
                 logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
                 time.sleep(2)
                 continue
+            except openai.BadRequestError as e:
+                if "tool_use_failed" in str(e):
+                    logger.warning(f"Model generated malformed tool call on turn {turn + 1}, retrying")
+                    messages.append({
+                        "role": "user",
+                        "content": "Your previous tool call was malformed. Use the provided tools correctly by passing proper JSON arguments.",
+                    })
+                    continue
+                logger.error(f"API error on turn {turn + 1}: {e}")
+                raise
             except openai.APIError as e:
                 logger.error(f"API error on turn {turn + 1}: {e}")
                 raise
