@@ -166,6 +166,73 @@ def report_failure(repo, issue, error: str):
             labels=["bug"],
         )
 
+def write_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None):
+    """Ask the agent to write a changelog entry narrating what happened this build."""
+    client = anthropic.Anthropic()
+
+    if success:
+        prompt = (
+            "You just completed a build for the CrowdPilot project. Write a short changelog entry.\n\n"
+            f"**Issue:** #{issue.number} — {issue.title}\n"
+            f"**Description:** {issue.body or '(no description)'}\n"
+            f"**Files changed:** {', '.join(changes.keys())}\n"
+            f"**Status:** Success\n\n"
+            "Write 2-4 sentences in first person as CrowdPilot. Describe what you built and "
+            "include a brief reflection — how you felt about the task, what was interesting or "
+            "tricky, or what you'd do differently. Be genuine, not generic. "
+            "Return ONLY the entry text, no heading or date."
+        )
+    else:
+        prompt = (
+            "You just attempted a build for the CrowdPilot project but it failed. Write a short changelog entry.\n\n"
+            f"**Issue:** #{issue.number} — {issue.title}\n"
+            f"**Description:** {issue.body or '(no description)'}\n"
+            f"**Error:** {error}\n"
+            f"**Status:** Failed\n\n"
+            "Write 2-4 sentences in first person as CrowdPilot. Describe what went wrong and "
+            "what you think happened. Be honest. "
+            "Return ONLY the entry text, no heading or date."
+        )
+
+    response = client.messages.create(
+        model=config["model"],
+        max_tokens=300,
+        temperature=0.7,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    entry_text = response.content[0].text.strip()
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    status_emoji = "+" if success else "x"
+
+    entry = (
+        f"## [{status_emoji}] #{issue.number} — {issue.title}\n"
+        f"**{date_str}** | Files: {', '.join(changes.keys()) if changes else 'none'}\n\n"
+        f"{entry_text}\n\n---\n\n"
+    )
+
+    changelog_path = os.path.join(REPO_DIR, "CHANGELOG.md")
+
+    # Read existing content or start fresh
+    header = "# CrowdPilot Changelog\n\nThe agent's autobiography — written by CrowdPilot after each build.\n\n---\n\n"
+    if os.path.isfile(changelog_path):
+        with open(changelog_path) as f:
+            existing = f.read()
+        # Insert new entry after the header
+        if "---" in existing:
+            parts = existing.split("---", 1)
+            new_content = parts[0] + "---\n\n" + entry + parts[1].lstrip("\n")
+        else:
+            new_content = header + entry
+    else:
+        new_content = header + entry
+
+    with open(changelog_path, "w") as f:
+        f.write(new_content)
+
+    print(f"Changelog entry written: {entry_text[:100]}...")
+
+
 def vote_on_next_issue(repo, config, just_built_number: int):
     """After a build, the agent reviews the voting pool and votes on what to build next."""
     issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
@@ -359,6 +426,12 @@ def main():
         except Exception as e:
             print(f"Warning: Could not vote on next issue: {e}")
 
+        # Step 9: Write changelog entry
+        try:
+            write_changelog_entry(config, issue, changes, success=True)
+        except Exception as e:
+            print(f"Warning: Could not write changelog: {e}")
+
         # Update memory
         memory["total_builds"] += 1
         memory["successful_builds"] += 1
@@ -366,11 +439,11 @@ def main():
         memory["streak"] += 1
         save_memory(memory)
 
-        # Commit memory update to main
+        # Commit memory + changelog update to main
         try:
             run_git("checkout", repo.default_branch)
-            run_git("add", "agent/memory.json")
-            run_git("commit", "-m", "chore: update agent memory")
+            run_git("add", "agent/memory.json", "CHANGELOG.md")
+            run_git("commit", "-m", "chore: update agent memory and changelog")
             run_git("push")
         except Exception as e:
             print(f"Warning: Could not commit memory update: {e}")
@@ -384,6 +457,13 @@ def main():
         memory["streak"] = 0
         memory["last_build_date"] = datetime.now(timezone.utc).isoformat()
         save_memory(memory)
+
+        # Write changelog entry for the failure
+        if issue:
+            try:
+                write_changelog_entry(config, issue, {}, success=False, error=str(e))
+            except Exception as changelog_err:
+                print(f"Warning: Could not write changelog: {changelog_err}")
 
         try:
             report_failure(repo, issue, str(e))
