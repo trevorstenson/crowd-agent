@@ -66,21 +66,42 @@ def get_repo(gh: Github):
     name = os.environ.get("REPO_NAME", "crowd-agent")
     return gh.get_repo(f"{owner}/{name}")
 
-def find_winning_issue(repo):
-    """Find the open issue with the most thumbs-up reactions labeled 'voting'."""
+def _count_votes(issue, bot_login: str) -> tuple[int, int]:
+    """Count (human_votes, total_votes) for an issue, only counting thumbs-up reactions."""
+    reactions = issue.get_reactions()
+    total = 0
+    human = 0
+    for reaction in reactions:
+        if reaction.content != "+1":
+            continue
+        total += 1
+        if reaction.user and reaction.user.login != bot_login:
+            human += 1
+    return human, total
+
+
+def find_winning_issue(repo, gh: Github):
+    """Find the open issue with the most thumbs-up reactions labeled 'voting'.
+
+    Human votes always take priority over agent votes. An issue with any
+    human votes will beat an issue that only has the agent's vote.
+    """
     issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
     issue_list = list(issues)
     if not issue_list:
         print("No issues with 'voting' label found. Nothing to build.")
         return None
 
-    # Sort by thumbs-up reactions (GitHub API sort may not be exact)
-    best = max(issue_list, key=lambda i: i.get_reactions().totalCount)
-    vote_count = best.get_reactions().totalCount
-    if vote_count == 0:
+    # Identify the bot account so we can separate human vs agent votes
+    bot_login = gh.get_user().login
+
+    # Score issues: human votes first, then total votes as tiebreaker
+    scored = [(issue, _count_votes(issue, bot_login)) for issue in issue_list]
+    best, (human_votes, total_votes) = max(scored, key=lambda x: x[1])
+    if total_votes == 0:
         print("No issues have any votes yet. Nothing to build.")
         return None
-    print(f"Winning issue #{best.number}: {best.title} ({vote_count} reactions)")
+    print(f"Winning issue #{best.number}: {best.title} ({human_votes} human, {total_votes} total reactions)")
     return best
 
 def announce_build(repo, issue):
@@ -413,7 +434,7 @@ def main():
     issue = None
     try:
         # Step 1: Find the winning issue
-        issue = find_winning_issue(repo)
+        issue = find_winning_issue(repo, gh)
         if issue is None:
             print("No issues to build. Exiting.")
             return
