@@ -10,6 +10,171 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// --- Build Log Manager ---
+
+const BuildLogManager = {
+  logFile: 'agent/build-log.json',
+
+  async fetchLogs() {
+    try {
+      const response = await fetch(this.logFile);
+      if (!response.ok) throw new Error('Failed to fetch logs');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching build logs:', error);
+      return { builds: [] };
+    }
+  },
+
+  async displayLogs(filters = {}) {
+    const data = await this.fetchLogs();
+    let builds = data.builds || [];
+
+    // Apply filters
+    if (filters.status) {
+      builds = builds.filter(b => b.status === filters.status);
+    }
+
+    // Limit results
+    const limit = filters.limit || 10;
+    builds = builds.slice(0, limit);
+
+    // Render logs
+    this.renderLogs(builds);
+  },
+
+  renderLogs(builds) {
+    const container = document.getElementById('build-log-container');
+    const emptyState = document.getElementById('build-log-empty');
+
+    if (builds.length === 0) {
+      container.style.display = 'none';
+      emptyState.style.display = 'block';
+      return;
+    }
+
+    container.style.display = 'flex';
+    emptyState.style.display = 'none';
+
+    container.innerHTML = builds.map(build => `
+      <div class="build-log-entry status-${build.status}">
+        <div class="build-header">
+          <span class="build-date">${new Date(build.timestamp).toLocaleString()}</span>
+          <span class="build-status ${build.status}">${build.status.toUpperCase()}</span>
+        </div>
+        <div class="build-issue">${build.issue}</div>
+        <div class="build-stats">
+          <span class="stat">
+            📄 ${build.files_changed.length} files changed
+          </span>
+          <span class="stat">
+            ⏱️ ${this.formatDuration(build.duration_seconds)}
+          </span>
+        </div>
+        <div class="build-summary">${build.summary}</div>
+        <button class="btn-details" onclick="BuildLogManager.showDetails('${build.id}')">
+          View Details
+        </button>
+      </div>
+    `).join('');
+  },
+
+  formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${minutes}m ${secs}s`;
+  },
+
+  async showDetails(buildId) {
+    const data = await this.fetchLogs();
+    const build = data.builds.find(b => b.id === buildId);
+
+    if (!build) return;
+
+    const modal = document.getElementById('build-detail-modal');
+    const content = document.getElementById('build-detail-content');
+
+    content.innerHTML = `
+      <h3>${build.issue}</h3>
+      <div class="detail-grid">
+        <div><strong>Date:</strong> ${new Date(build.timestamp).toLocaleString()}</div>
+        <div><strong>Status:</strong> <span class="build-status ${build.status}">${build.status.toUpperCase()}</span></div>
+        <div><strong>Duration:</strong> ${this.formatDuration(build.duration_seconds)}</div>
+        <div><strong>Commit:</strong> <code>${build.commit_hash}</code></div>
+      </div>
+      <div class="detail-section">
+        <h4>Files Changed</h4>
+        <ul>
+          ${build.files_changed.map(f => `<li>${f}</li>`).join('')}
+        </ul>
+      </div>
+      <div class="detail-section">
+        <h4>Summary</h4>
+        <p>${build.summary}</p>
+      </div>
+      ${build.error_message ? `
+        <div class="detail-section error">
+          <h4>Error</h4>
+          <pre>${this.escapeHtml(build.error_message)}</pre>
+        </div>
+      ` : ''}
+    `;
+
+    modal.style.display = 'block';
+  },
+
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  },
+
+  setupEventListeners() {
+    const statusFilter = document.getElementById('status-filter');
+    const logLimit = document.getElementById('log-limit');
+    const refreshBtn = document.getElementById('refresh-logs');
+    const modal = document.getElementById('build-detail-modal');
+    const closeBtn = document.querySelector('.close');
+
+    if (statusFilter) {
+      statusFilter.addEventListener('change', () => this.applyFilters());
+    }
+
+    if (logLimit) {
+      logLimit.addEventListener('change', () => this.applyFilters());
+    }
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => this.applyFilters());
+    }
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+      });
+    }
+
+    if (modal) {
+      window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+          modal.style.display = 'none';
+        }
+      });
+    }
+  },
+
+  applyFilters() {
+    const status = document.getElementById('status-filter')?.value || '';
+    const limit = parseInt(document.getElementById('log-limit')?.value || '10');
+
+    this.displayLogs({
+      status: status || undefined,
+      limit: limit,
+    });
+  },
+};
+
 // --- Agent Stats ---
 
 async function loadAgentStats() {
@@ -252,7 +417,11 @@ async function init() {
     loadRecentBuilds(),
     loadSourceCode(),
     loadChangelog(),
+    BuildLogManager.displayLogs({ limit: 10 }),
   ]);
+
+  // Setup event listeners for build log
+  BuildLogManager.setupEventListeners();
 }
 
 init();

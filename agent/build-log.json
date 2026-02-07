@@ -1,0 +1,18 @@
+{
+  "builds": [
+    {
+      "id": "2024-01-15-001",
+      "timestamp": "2024-01-15T02:30:00Z",
+      "issue": "#1: Initial setup",
+      "status": "success",
+      "duration_seconds": 1245,
+      "files_changed": ["README.md", "agent/main.py"],
+      "files_added": 2,
+      "files_modified": 1,
+      "files_deleted": 0,
+      "commit_hash": "abc123def456",
+      "error_message": null,
+      "summary": "Successfully set up the initial agent infrastructure with basic tooling."
+    }
+  ]
+}
