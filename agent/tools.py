@@ -6,6 +6,7 @@ can call during its build loop. The community can vote to add more tools.
 """
 
 import os
+import re
 
 # Base directory of the repository (set at runtime)
 REPO_DIR = os.environ.get("GITHUB_WORKSPACE", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,6 +58,82 @@ def list_files(directory: str = ".") -> str:
         return f"Error listing directory: {e}"
 
 
+def search_files(pattern: str, case_sensitive: bool = False, max_results: int = 20) -> str:
+    """
+    Search for text patterns across the repository.
+    
+    Args:
+        pattern: Text or regex pattern to search for
+        case_sensitive: Whether to match case (default: False)
+        max_results: Maximum number of results to return (default: 20)
+    
+    Returns:
+        JSON string with search results including matches, total count, and metadata
+    """
+    import json
+    
+    # Compile regex pattern
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as e:
+        return json.dumps({
+            'error': f'Invalid regex pattern: {str(e)}',
+            'matches': [],
+            'total_matches': 0
+        })
+    
+    # Define exclusions
+    skip_dirs = {'.git', '__pycache__', '.venv', 'node_modules', '.pytest_cache', '.github'}
+    skip_extensions = {'.pyc', '.o', '.so', '.bin', '.jpg', '.png', '.gif', '.pdf', '.pyc', '.class'}
+    
+    matches = []
+    total_matches = 0
+    
+    # Walk repository
+    try:
+        for root, dirs, files in os.walk(REPO_DIR):
+            # Prune excluded directories
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            
+            for file in files:
+                if any(file.endswith(ext) for ext in skip_extensions):
+                    continue
+                
+                filepath = os.path.join(root, file)
+                rel_path = os.path.relpath(filepath, REPO_DIR)
+                
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line_num, line in enumerate(f, 1):
+                            if regex.search(line):
+                                total_matches += 1
+                                if len(matches) < max_results:
+                                    matches.append({
+                                        'file': rel_path,
+                                        'line_num': line_num,
+                                        'snippet': line.rstrip()
+                                    })
+                except (IOError, OSError):
+                    # Skip files we can't read
+                    continue
+    except Exception as e:
+        return json.dumps({
+            'error': f'Search failed: {str(e)}',
+            'matches': matches,
+            'total_matches': total_matches
+        })
+    
+    return json.dumps({
+        'matches': matches,
+        'total_matches': total_matches,
+        'search_pattern': pattern,
+        'case_sensitive': case_sensitive,
+        'max_results': max_results,
+        'results_truncated': total_matches > max_results
+    })
+
+
 # Tool definitions for the Claude API
 TOOL_DEFINITIONS = [
     {
@@ -105,6 +182,30 @@ TOOL_DEFINITIONS = [
             },
             "required": []
         }
+    },
+    {
+        "name": "search_files",
+        "description": "Search for text patterns across the repository. Useful for discovering relevant code when you don't know the exact file location.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Text or regex pattern to search for. Supports regex syntax."
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "description": "Whether to match case. Default is false (case-insensitive).",
+                    "default": False
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return. Default is 20.",
+                    "default": 20
+                }
+            },
+            "required": ["pattern"]
+        }
     }
 ]
 
@@ -113,6 +214,7 @@ TOOL_FUNCTIONS = {
     "read_file": read_file,
     "write_file": write_file,
     "list_files": list_files,
+    "search_files": search_files,
 }
 
 
