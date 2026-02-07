@@ -4,9 +4,10 @@ Crowd Agent — The Evolving Build Loop
 This script runs nightly via GitHub Actions. It:
 1. Finds the top-voted issue labeled 'voting'
 2. Announces the build on the issue
-3. Calls the Claude API with tool use to implement the feature
-4. Creates a branch and PR with the changes
-5. Reports the result
+3. Calls the Claude API to create a plan
+4. Calls the Claude API with tool use to implement the plan
+5. Creates a branch and PR with the changes
+6. Reports the result
 
 This file is community-modifiable — the community can vote to change
 how the agent works, what tools it has, and how it makes decisions.
@@ -364,13 +365,60 @@ def get_repo_file_list() -> list[str]:
     except Exception:
         return []
 
-def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str) -> dict[str, str]:
-    """Run the agent loop: call Claude with tools until done. Returns file changes."""
+def create_plan(issue, repo_files: list[str], config: dict) -> str:
+    """Ask Claude to create a plan for implementing the issue.
+    
+    Returns the plan as a string.
+    """
+    client = anthropic.Anthropic()
+    
+    prompt = (
+        f"## Task\n\nCreate a detailed plan for implementing this GitHub issue:\n\n"
+        f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n"
+        f"## Repository Structure\n\n"
+    )
+    
+    for path in repo_files:
+        prompt += f"- `{path}`\n"
+    
+    prompt += (
+        "\n\n## Planning Instructions\n\n"
+        "Create a clear, step-by-step plan that includes:\n"
+        "1. **Files to modify** — List each file you'll need to change\n"
+        "2. **Approach** — Describe your strategy for solving this problem\n"
+        "3. **Key changes** — Outline the main modifications for each file\n"
+        "4. **Potential challenges** — Note any tricky parts or edge cases\n\n"
+        "Be specific and concrete. This plan will guide your implementation."
+    )
+    
+    response = client.messages.create(
+        model=config["model"],
+        max_tokens=2000,
+        temperature=0.3,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    
+    plan = response.content[0].text.strip()
+    print(f"Plan created:\n{plan[:500]}...\n")
+    return plan
+
+def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop: call Claude with tools until done. Returns file changes.
+    
+    The agent is given the plan upfront to guide its implementation.
+    """
     reset_file_changes()
     client = anthropic.Anthropic()
 
+    # Build the prompt with the plan included
+    prompt_text = build_prompt(issue, repo_files)
+    prompt_text += (
+        f"\n\n## Implementation Plan\n\n"
+        f"Follow this plan to guide your implementation:\n\n{plan}"
+    )
+
     messages = [
-        {"role": "user", "content": build_prompt(issue, repo_files)}
+        {"role": "user", "content": prompt_text}
     ]
 
     for turn in range(config["max_turns"]):
@@ -454,23 +502,26 @@ def main():
         # Step 3: Get repo context
         repo_files = get_repo_file_list()
 
-        # Step 4-5: Run the agent loop (calls Claude, executes tools)
-        changes = run_agent(issue, repo_files, config, system_prompt)
+        # Step 4: Create a plan before implementing
+        plan = create_plan(issue, repo_files, config)
+
+        # Step 5-6: Run the agent loop with the plan (calls Claude, executes tools)
+        changes = run_agent(issue, repo_files, config, system_prompt, plan)
 
         if not changes:
             raise RuntimeError("Agent made no file changes.")
 
-        # Step 6: Generate changelog entry (embedded in PR, written on merge)
+        # Step 7: Generate changelog entry (embedded in PR, written on merge)
         changelog_text = ""
         try:
             changelog_text = generate_changelog_entry(config, issue, changes, success=True)
         except Exception as e:
             print(f"Warning: Could not generate changelog: {e}")
 
-        # Step 7: Create branch and PR (with changelog embedded in body)
+        # Step 8: Create branch and PR (with changelog embedded in body)
         pr_url = create_branch_and_pr(repo, issue, changes, changelog_text=changelog_text)
 
-        # Step 8: Report the result
+        # Step 9: Report the result
         report_result(issue, pr_url)
 
         # Tweet about the build result
@@ -480,7 +531,7 @@ def main():
         except Exception as e:
             print(f"Warning: Could not tweet build success: {e}")
 
-        # Step 9: Vote on what to build next
+        # Step 10: Vote on what to build next
         try:
             vote_on_next_issue(repo, config, issue.number)
         except Exception as e:
