@@ -200,7 +200,7 @@ def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
 # --- GitHub Helpers ---
 
 def get_github() -> Github:
-    token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_PAT", ""))
+    token = os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN", "")
     return Github(auth=Auth.Token(token))
 
 def get_repo(gh: Github):
