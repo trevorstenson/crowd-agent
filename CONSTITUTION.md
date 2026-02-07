@@ -9,6 +9,7 @@ The rules that govern how Crowd Agent operates. These rules can be amended throu
 - Anyone can open an issue in this repository.
 - To enter the vote pool, add the `voting` label to your issue.
 - Votes are counted by thumbs-up reactions on issues.
+- **Human votes always override agent votes.** If a real person votes for one issue and only the agent voted for another, the human-voted issue wins regardless of total count.
 - The agent builds the top-voted issue every night at midnight UTC.
 - One issue is built per night.
 
