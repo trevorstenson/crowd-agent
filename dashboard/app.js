@@ -1,4 +1,4 @@
-// CrowdPilot Dashboard
+// Crowd Agent Dashboard
 // Fetches data from the GitHub API (unauthenticated) and renders the dashboard.
 
 const REPO = 'trevorstenson/crowd-agent';
@@ -174,7 +174,7 @@ async function loadChangelog() {
 
     // Split into entries on "---" separators, skip the header
     const sections = markdown.split(/\n---\n/).filter(s => s.trim());
-    // First section is the header ("# CrowdPilot Changelog\n\n..."), skip it
+    // First section is the header ("# Crowd Agent Changelog\n\n..."), skip it
     const entries = sections.slice(1);
 
     container.innerHTML = '';

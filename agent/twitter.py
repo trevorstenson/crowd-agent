@@ -1,5 +1,5 @@
 """
-Twitter/X integration for CrowdPilot nightly builds.
+Twitter/X integration for Crowd Agent nightly builds.
 
 Posts tweets at two points in the build cycle:
 - Pre-build: announces which issue won the vote
