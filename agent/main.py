@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 import anthropic
@@ -32,6 +33,11 @@ from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
 # --- Configuration ---
 
 REPO_DIR = os.environ.get("GITHUB_WORKSPACE", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Retry and timeout configuration
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds, exponential backoff
+AGENT_LOOP_TIMEOUT = 600  # 10 minutes for the entire agent loop
 
 def load_config() -> dict:
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -199,7 +205,8 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
             "Return ONLY the entry text, no heading or date."
         )
 
-    response = client.messages.create(
+    response = call_claude_with_retry(
+        client,
         model=config["model"],
         max_tokens=300,
         temperature=0.7,
@@ -269,7 +276,8 @@ def vote_on_next_issue(repo, config, just_built_number: int):
     )
 
     client = anthropic.Anthropic()
-    response = client.messages.create(
+    response = call_claude_with_retry(
+        client,
         model=config["model"],
         max_tokens=256,
         temperature=0,
@@ -316,6 +324,104 @@ def run_git(*args):
     return result.stdout.strip()
 
 
+# --- Retry Logic ---
+
+def is_transient_error(error: Exception) -> bool:
+    """Check if an error is transient (retryable)."""
+    error_str = str(error).lower()
+    
+    # Rate limit errors
+    if "rate_limit" in error_str or "429" in error_str:
+        return True
+    
+    # Timeout errors
+    if "timeout" in error_str or "timed out" in error_str:
+        return True
+    
+    # Connection errors
+    if "connection" in error_str or "network" in error_str:
+        return True
+    
+    # Temporary service errors
+    if "503" in error_str or "502" in error_str or "500" in error_str:
+        return True
+    
+    # Anthropic-specific transient errors
+    if hasattr(error, "status_code"):
+        return error.status_code in [429, 500, 502, 503]
+    
+    return False
+
+
+def call_claude_with_retry(
+    client: anthropic.Anthropic,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    messages: list,
+    system: str = None,
+    tools: list = None,
+    max_retries: int = MAX_RETRIES,
+) -> anthropic.Message:
+    """
+    Call the Claude API with automatic retry logic for transient failures.
+    
+    Args:
+        client: Anthropic client
+        model: Model name
+        max_tokens: Max tokens in response
+        temperature: Temperature for sampling
+        messages: Message history
+        system: System prompt (optional)
+        tools: Tool definitions (optional)
+        max_retries: Maximum number of retries
+    
+    Returns:
+        The API response
+    
+    Raises:
+        anthropic.APIError: If all retries are exhausted
+    """
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            kwargs = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": messages,
+            }
+            if system:
+                kwargs["system"] = system
+            if tools:
+                kwargs["tools"] = tools
+            
+            response = client.messages.create(**kwargs)
+            return response
+        
+        except Exception as e:
+            last_error = e
+            
+            if not is_transient_error(e):
+                # Non-transient error — fail immediately
+                print(f"Non-transient error: {e}")
+                raise
+            
+            if attempt < max_retries - 1:
+                # Exponential backoff: 2s, 4s, 8s, etc.
+                wait_time = RETRY_DELAY * (2 ** attempt)
+                print(f"Transient error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                # All retries exhausted
+                print(f"All {max_retries} retries exhausted. Last error: {e}")
+    
+    # Should not reach here, but raise the last error if we do
+    raise last_error
+
+
 # --- Agent Loop ---
 
 def build_prompt(issue, repo_files: list[str]) -> str:
@@ -344,25 +450,46 @@ def get_repo_file_list() -> list[str]:
         return []
 
 def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str) -> dict[str, str]:
-    """Run the agent loop: call Claude with tools until done. Returns file changes."""
+    """
+    Run the agent loop: call Claude with tools until done. Returns file changes.
+    
+    Includes:
+    - Retry logic for Claude API calls
+    - Graceful error handling for tool execution
+    - Overall timeout for the agent loop
+    """
     reset_file_changes()
     client = anthropic.Anthropic()
+    
+    start_time = time.time()
 
     messages = [
         {"role": "user", "content": build_prompt(issue, repo_files)}
     ]
 
     for turn in range(config["max_turns"]):
-        print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
+        # Check overall timeout
+        elapsed = time.time() - start_time
+        if elapsed > AGENT_LOOP_TIMEOUT:
+            raise RuntimeError(
+                f"Agent loop timeout exceeded ({AGENT_LOOP_TIMEOUT}s). "
+                f"Completed {turn} turns before timeout."
+            )
+        
+        print(f"--- Agent turn {turn + 1}/{config['max_turns']} (elapsed: {elapsed:.1f}s) ---")
 
-        response = client.messages.create(
-            model=config["model"],
-            max_tokens=config["max_tokens"],
-            temperature=config["temperature"],
-            system=system_prompt,
-            messages=messages,
-            tools=TOOL_DEFINITIONS,
-        )
+        try:
+            response = call_claude_with_retry(
+                client,
+                model=config["model"],
+                max_tokens=config["max_tokens"],
+                temperature=config["temperature"],
+                system=system_prompt,
+                messages=messages,
+                tools=TOOL_DEFINITIONS,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Claude API call failed after retries: {e}")
 
         # Collect assistant content
         assistant_content = response.content
@@ -376,18 +503,32 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str) ->
                     print(f"Agent summary: {block.text[:200]}...")
             break
 
-        # Process tool calls
+        # Process tool calls with error handling
         tool_results = []
         for block in assistant_content:
             if block.type == "tool_use":
-                print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
-                result = execute_tool(block.name, block.input)
-                print(f"  Result: {result[:100]}...")
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                tool_name = block.name
+                tool_input = block.input
+                print(f"  Tool call: {tool_name}({json.dumps(tool_input)[:100]})")
+                
+                try:
+                    result = execute_tool(tool_name, tool_input)
+                    print(f"  Result: {result[:100]}...")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
+                except Exception as e:
+                    # Gracefully report tool execution error
+                    error_msg = f"Tool execution error: {e}"
+                    print(f"  Error: {error_msg}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": error_msg,
+                        "is_error": True,
+                    })
 
         if tool_results:
             messages.append({"role": "user", "content": tool_results})
