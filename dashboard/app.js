@@ -164,6 +164,77 @@ async function loadSourceCode() {
   }
 }
 
+// --- Changelog ---
+
+async function loadChangelog() {
+  const container = document.getElementById('changelog-content');
+  try {
+    const data = await fetchJSON(`${API}/repos/${REPO}/contents/CHANGELOG.md`);
+    const markdown = atob(data.content);
+
+    // Split into entries on "---" separators, skip the header
+    const sections = markdown.split(/\n---\n/).filter(s => s.trim());
+    // First section is the header ("# CrowdPilot Changelog\n\n..."), skip it
+    const entries = sections.slice(1);
+
+    container.innerHTML = '';
+    if (entries.length === 0) {
+      container.innerHTML = '<p class="empty-state">No builds yet. The first changelog entry is coming soon.</p>';
+      return;
+    }
+
+    for (const entry of entries) {
+      const lines = entry.trim().split('\n').filter(l => l.trim());
+      if (lines.length === 0) continue;
+
+      const el = document.createElement('div');
+
+      // Parse heading: "## [+] #1 — Title" or "## [x] #1 — Title"
+      const headingMatch = lines[0]?.match(/^##\s*\[([+x])\]\s*(.*)/);
+      const metaLine = lines[1] || '';
+      const bodyLines = lines.slice(2);
+
+      const success = headingMatch ? headingMatch[1] === '+' : true;
+      const title = headingMatch ? headingMatch[2] : lines[0].replace(/^#+\s*/, '');
+
+      el.className = `changelog-entry ${success ? 'changelog-success' : 'changelog-failure'}`;
+
+      const statusIcon = document.createElement('span');
+      statusIcon.className = 'changelog-status';
+      statusIcon.textContent = success ? '+' : 'x';
+      el.appendChild(statusIcon);
+
+      const content = document.createElement('div');
+      content.className = 'changelog-body';
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'changelog-title';
+      titleEl.textContent = title;
+      content.appendChild(titleEl);
+
+      if (metaLine) {
+        const metaEl = document.createElement('div');
+        metaEl.className = 'changelog-meta';
+        metaEl.textContent = metaLine.replace(/\*\*/g, '');
+        content.appendChild(metaEl);
+      }
+
+      if (bodyLines.length > 0) {
+        const textEl = document.createElement('div');
+        textEl.className = 'changelog-text';
+        textEl.textContent = bodyLines.join(' ');
+        content.appendChild(textEl);
+      }
+
+      el.appendChild(content);
+      container.appendChild(el);
+    }
+  } catch (e) {
+    console.warn('Could not load changelog:', e);
+    container.innerHTML = '<p class="empty-state">No builds yet. The first changelog entry is coming soon.</p>';
+  }
+}
+
 // --- Init ---
 
 async function init() {
@@ -174,6 +245,7 @@ async function init() {
     loadBuildingIssues(),
     loadRecentBuilds(),
     loadSourceCode(),
+    loadChangelog(),
   ]);
 }
 
