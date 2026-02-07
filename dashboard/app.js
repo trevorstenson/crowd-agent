@@ -4,10 +4,57 @@
 const REPO = 'trevorstenson/crowd-agent';
 const API = 'https://api.github.com';
 
+// --- Dashboard State Management ---
+
+const dashboardState = {
+  refreshInterval: null,
+  isLoading: false,
+  lastUpdated: null,
+  autoRefreshEnabled: true,
+};
+
 async function fetchJSON(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
   return res.json();
+}
+
+// --- UI State Management ---
+
+function updateLoadingUI(isLoading) {
+  const spinner = document.getElementById('refresh-spinner');
+  const btn = document.getElementById('refresh-btn');
+  
+  if (isLoading) {
+    spinner?.classList.add('visible');
+    if (btn) btn.disabled = true;
+  } else {
+    spinner?.classList.remove('visible');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function updateLastUpdatedDisplay() {
+  const timestamp = document.getElementById('last-updated');
+  if (timestamp && dashboardState.lastUpdated) {
+    const time = dashboardState.lastUpdated.toLocaleTimeString();
+    timestamp.textContent = `Last updated: ${time}`;
+  }
+}
+
+function showErrorMessage(message) {
+  const errorEl = document.getElementById('error-message');
+  if (errorEl) {
+    errorEl.textContent = message;
+    errorEl.classList.add('visible');
+  }
+}
+
+function clearErrorMessage() {
+  const errorEl = document.getElementById('error-message');
+  if (errorEl) {
+    errorEl.classList.remove('visible');
+  }
 }
 
 // --- Agent Stats ---
@@ -241,18 +288,80 @@ async function loadChangelog() {
   }
 }
 
+// --- Real-Time Vote Refresh ---
+
+async function fetchVoteCounts() {
+  dashboardState.isLoading = true;
+  updateLoadingUI(true);
+
+  try {
+    // Fetch voting issues to update vote counts
+    await loadVotingIssues();
+    
+    // Update timestamp
+    dashboardState.lastUpdated = new Date();
+    updateLastUpdatedDisplay();
+    
+    // Clear any error states
+    clearErrorMessage();
+  } catch (error) {
+    console.error('Failed to fetch vote counts:', error);
+    showErrorMessage('Unable to refresh vote counts. Retrying in 60 seconds.');
+  } finally {
+    dashboardState.isLoading = false;
+    updateLoadingUI(false);
+  }
+}
+
+function setupManualRefreshButton() {
+  const refreshBtn = document.getElementById('refresh-btn');
+  
+  if (!refreshBtn) return;
+  
+  refreshBtn.addEventListener('click', async () => {
+    if (dashboardState.isLoading) return; // Prevent double-clicks
+    
+    await fetchVoteCounts();
+  });
+}
+
+function initializeAutoRefresh() {
+  // Fetch immediately on load (vote counts only)
+  fetchVoteCounts();
+  
+  // Set up 60-second interval for auto-refresh
+  dashboardState.refreshInterval = setInterval(() => {
+    if (dashboardState.autoRefreshEnabled && !dashboardState.isLoading) {
+      fetchVoteCounts();
+    }
+  }, 60000); // 60 seconds
+}
+
+// --- Cleanup ---
+
+window.addEventListener('beforeunload', () => {
+  if (dashboardState.refreshInterval) {
+    clearInterval(dashboardState.refreshInterval);
+  }
+});
+
 // --- Init ---
 
 async function init() {
-  // Run all fetches in parallel
+  // Set up manual refresh button
+  setupManualRefreshButton();
+  
+  // Run all fetches in parallel (except voting issues, which will be handled by auto-refresh)
   await Promise.allSettled([
     loadAgentStats(),
-    loadVotingIssues(),
     loadBuildingIssues(),
     loadRecentBuilds(),
     loadSourceCode(),
     loadChangelog(),
   ]);
+  
+  // Initialize auto-refresh for voting issues
+  initializeAutoRefresh();
 }
 
-init();
+document.addEventListener('DOMContentLoaded', init);

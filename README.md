@@ -37,6 +37,13 @@ See the [Constitution](CONSTITUTION.md) for governance rules, including protecte
 
 Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevorstenson.github.io/crowd-agent/)**
 
+### Real-Time Vote Tracking
+
+The dashboard automatically refreshes vote counts every 60 seconds so you can watch the voting in real time. You can also:
+- Click the **"Refresh Now"** button for immediate updates
+- View the **"Last updated"** timestamp to see when data was last fetched
+- The dashboard will continue retrying if the connection fails
+
 ## Stack
 
 - **Agent:** Python, Claude Sonnet 4.5 API, PyGithub
