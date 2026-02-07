@@ -2,5 +2,13 @@
   "model": "claude-haiku-4-5-20251001",
   "max_tokens": 8096,
   "max_turns": 10,
-  "temperature": 0
+  "temperature": 0,
+  "error_handling": {
+    "max_retries": 3,
+    "initial_retry_delay_seconds": 1,
+    "max_retry_delay_seconds": 30,
+    "backoff_multiplier": 2,
+    "agent_loop_timeout_seconds": 300,
+    "tool_execution_timeout_seconds": 60
+  }
 }
