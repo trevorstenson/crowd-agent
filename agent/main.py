@@ -240,7 +240,11 @@ def find_winning_issue(repo, gh: Github):
         return None
 
     # Identify the bot account so we can separate human vs agent votes
-    bot_login = gh.get_user().login
+    try:
+        bot_login = gh.get_user().login
+    except Exception:
+        # App installation tokens can't call GET /user; fall back to env or app bot name
+        bot_login = os.environ.get("BOT_LOGIN", "")
 
     # Score issues: human net votes first, then total net votes, then oldest issue as tiebreaker
     scored = [(issue, _count_votes(issue, bot_login)) for issue in issue_list]
