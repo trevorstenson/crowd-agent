@@ -1,5 +1,5 @@
 """
-CrowdPilot Agent Tools
+Crowd Agent Tools
 
 Minimal tool implementations for the agent. These are the tools the agent
 can call during its build loop. The community can vote to add more tools.

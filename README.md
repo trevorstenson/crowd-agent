@@ -1,8 +1,8 @@
-# CrowdPilot
+# Crowd Agent
 
 **An AI coding agent governed by the crowd.**
 
-Every night at midnight UTC, CrowdPilot reads the top-voted GitHub Issue, implements it using Claude, and opens a pull request. The twist: the agent's own source code is part of the repo — so the community can vote to change how the agent thinks, what tools it has, and how it behaves.
+Every night at midnight UTC, Crowd Agent reads the top-voted GitHub Issue, implements it using Claude, and opens a pull request. The twist: the agent's own source code is part of the repo — so the community can vote to change how the agent thinks, what tools it has, and how it behaves.
 
 The agent modifies itself.
 

@@ -1,6 +1,6 @@
-# CrowdPilot Constitution
+# Crowd Agent Constitution
 
-The rules that govern how CrowdPilot operates. These rules can be amended through community-voted pull requests.
+The rules that govern how Crowd Agent operates. These rules can be amended through community-voted pull requests.
 
 ---
 

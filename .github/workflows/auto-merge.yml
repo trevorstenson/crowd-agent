@@ -115,8 +115,8 @@ jobs:
           fi
 
           # Commit and push
-          git config user.name "CrowdPilot[bot]"
-          git config user.email "crowdpilot-bot@users.noreply.github.com"
+          git config user.name "Crowd Agent[bot]"
+          git config user.email "crowd-agent-bot@users.noreply.github.com"
           git add CHANGELOG.md agent/memory.json
           git diff --cached --quiet && echo "No changes to commit" && exit 0
           git commit -m "chore: update changelog and memory after merge of PR #$PR_NUMBER"
@@ -210,8 +210,8 @@ jobs:
           fi
 
           # Commit and push
-          git config user.name "CrowdPilot[bot]"
-          git config user.email "crowdpilot-bot@users.noreply.github.com"
+          git config user.name "Crowd Agent[bot]"
+          git config user.email "crowd-agent-bot@users.noreply.github.com"
           git add CHANGELOG.md agent/memory.json
           git diff --cached --quiet && echo "No changes to commit" && exit 0
           git commit -m "chore: update changelog and memory after merge of PR #$PR_NUMBER"
