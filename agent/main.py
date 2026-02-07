@@ -92,7 +92,7 @@ def announce_build(repo, issue):
         pass
     issue.add_to_labels("building")
 
-def create_branch_and_pr(repo, issue, changes: dict[str, str]) -> str:
+def create_branch_and_pr(repo, issue, changes: dict[str, str], changelog_text: str = "") -> str:
     """Create a branch, commit changes, push, and open a PR. Returns PR URL."""
     branch_name = f"agent/issue-{issue.number}"
     base_branch = repo.default_branch
@@ -122,7 +122,7 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str]) -> str:
     run_git("remote", "set-url", "origin", remote_url)
     run_git("push", "--force", "--set-upstream", "origin", branch_name)
 
-    # Create PR
+    # Create PR with changelog embedded in HTML comments
     pr_body = (
         f"Closes #{issue.number}\n\n"
         f"**Issue:** {issue.title}\n\n"
@@ -130,6 +130,10 @@ def create_branch_and_pr(repo, issue, changes: dict[str, str]) -> str:
         f"**Files changed:** {', '.join(changes.keys())}\n\n"
         f"Please review and approve to merge."
     )
+    if changelog_text:
+        pr_body += (
+            f"\n\n<!-- CHANGELOG_START -->\n{changelog_text}<!-- CHANGELOG_END -->"
+        )
     pr = repo.create_pull(
         title=commit_msg,
         body=pr_body,
@@ -166,8 +170,8 @@ def report_failure(repo, issue, error: str):
             labels=["bug"],
         )
 
-def write_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None):
-    """Ask the agent to write a changelog entry narrating what happened this build."""
+def generate_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None) -> str:
+    """Ask the agent to write a changelog entry. Returns the formatted markdown entry."""
     client = anthropic.Anthropic()
 
     if success:
@@ -211,6 +215,14 @@ def write_changelog_entry(config, issue, changes: dict[str, str], success: bool,
         f"{entry_text}\n\n---\n\n"
     )
 
+    print(f"Changelog entry generated: {entry_text[:100]}...")
+    return entry
+
+
+def write_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None):
+    """Generate a changelog entry and write it to CHANGELOG.md (used for failure path)."""
+    entry = generate_changelog_entry(config, issue, changes, success, error)
+
     changelog_path = os.path.join(REPO_DIR, "CHANGELOG.md")
 
     # Read existing content or start fresh
@@ -229,8 +241,6 @@ def write_changelog_entry(config, issue, changes: dict[str, str], success: bool,
 
     with open(changelog_path, "w") as f:
         f.write(new_content)
-
-    print(f"Changelog entry written: {entry_text[:100]}...")
 
 
 def vote_on_next_issue(repo, config, just_built_number: int):
@@ -414,39 +424,24 @@ def main():
         if not changes:
             raise RuntimeError("Agent made no file changes.")
 
-        # Step 6: Create branch and PR
-        pr_url = create_branch_and_pr(repo, issue, changes)
+        # Step 6: Generate changelog entry (embedded in PR, written on merge)
+        changelog_text = ""
+        try:
+            changelog_text = generate_changelog_entry(config, issue, changes, success=True)
+        except Exception as e:
+            print(f"Warning: Could not generate changelog: {e}")
 
-        # Step 7: Report the result
+        # Step 7: Create branch and PR (with changelog embedded in body)
+        pr_url = create_branch_and_pr(repo, issue, changes, changelog_text=changelog_text)
+
+        # Step 8: Report the result
         report_result(issue, pr_url)
 
-        # Step 8: Vote on what to build next
+        # Step 9: Vote on what to build next
         try:
             vote_on_next_issue(repo, config, issue.number)
         except Exception as e:
             print(f"Warning: Could not vote on next issue: {e}")
-
-        # Step 9: Write changelog entry
-        try:
-            write_changelog_entry(config, issue, changes, success=True)
-        except Exception as e:
-            print(f"Warning: Could not write changelog: {e}")
-
-        # Update memory
-        memory["total_builds"] += 1
-        memory["successful_builds"] += 1
-        memory["last_build_date"] = datetime.now(timezone.utc).isoformat()
-        memory["streak"] += 1
-        save_memory(memory)
-
-        # Commit memory + changelog update to main
-        try:
-            run_git("checkout", repo.default_branch)
-            run_git("add", "agent/memory.json", "CHANGELOG.md")
-            run_git("commit", "-m", "chore: update agent memory and changelog")
-            run_git("push")
-        except Exception as e:
-            print(f"Warning: Could not commit memory update: {e}")
 
         print("Build completed successfully!")
 

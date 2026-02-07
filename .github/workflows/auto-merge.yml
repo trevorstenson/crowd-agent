@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check approvals and merge
+        id: merge
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -36,6 +37,7 @@ jobs:
           if [ "$APPROVALS" -ge 1 ] && [ "$CHANGES_REQUESTED" -eq 0 ]; then
             echo "Merging PR #$PR_NUMBER"
             gh pr merge $PR_NUMBER --repo $REPO --squash --delete-branch
+            echo "merged=true" >> $GITHUB_OUTPUT
 
             # Find linked issue and label it shipped
             ISSUE_NUMBER=$(gh pr view $PR_NUMBER --repo $REPO --json body \
@@ -48,7 +50,74 @@ jobs:
             fi
           else
             echo "Not enough approvals or changes requested. Skipping."
+            echo "merged=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Checkout repo
+        if: steps.merge.outputs.merged == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update changelog and memory
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+
+          # Extract changelog from PR body between markers
+          PR_BODY=$(gh pr view $PR_NUMBER --repo $REPO --json body --jq '.body')
+          CHANGELOG_ENTRY=$(echo "$PR_BODY" | sed -n '/<!-- CHANGELOG_START -->/,/<!-- CHANGELOG_END -->/{ /<!-- CHANGELOG_START -->/d; /<!-- CHANGELOG_END -->/d; p; }')
+
+          if [ -n "$CHANGELOG_ENTRY" ]; then
+            echo "Found changelog entry, appending to CHANGELOG.md"
+
+            # Insert entry after the header's --- separator
+            if [ -f CHANGELOG.md ] && grep -q '^---$' CHANGELOG.md; then
+              # Find the line number of the first --- and insert after it
+              SEPARATOR_LINE=$(grep -n '^---$' CHANGELOG.md | head -1 | cut -d: -f1)
+              {
+                head -n "$SEPARATOR_LINE" CHANGELOG.md
+                echo ""
+                echo "$CHANGELOG_ENTRY"
+                tail -n +"$((SEPARATOR_LINE + 1))" CHANGELOG.md
+              } > CHANGELOG.md.tmp
+              mv CHANGELOG.md.tmp CHANGELOG.md
+            else
+              # No existing changelog, create with header
+              {
+                echo "# CrowdPilot Changelog"
+                echo ""
+                echo "The agent's autobiography — written by CrowdPilot after each build."
+                echo ""
+                echo "---"
+                echo ""
+                echo "$CHANGELOG_ENTRY"
+              } > CHANGELOG.md
+            fi
+          else
+            echo "No changelog entry found in PR body, skipping changelog update"
+          fi
+
+          # Update memory.json
+          if [ -f agent/memory.json ]; then
+            DATE_NOW=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
+            jq \
+              --arg date "$DATE_NOW" \
+              '.total_builds += 1 | .successful_builds += 1 | .streak += 1 | .last_build_date = $date' \
+              agent/memory.json > agent/memory.json.tmp
+            mv agent/memory.json.tmp agent/memory.json
+          fi
+
+          # Commit and push
+          git config user.name "CrowdPilot[bot]"
+          git config user.email "crowdpilot-bot@users.noreply.github.com"
+          git add CHANGELOG.md agent/memory.json
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update changelog and memory after merge of PR #$PR_NUMBER"
+          git push
 
   requeue-rejected:
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged
