@@ -3,5 +3,11 @@
   "successful_builds": 11,
   "failed_builds": 0,
   "last_build_date": "2026-02-07T06:20:27+00:00",
-  "streak": 11
+  "streak": 11,
+  "proposed_features": [],
+  "proposal_history": {
+    "total_proposed": 0,
+    "total_implemented": 0,
+    "last_proposal_date": null
+  }
 }

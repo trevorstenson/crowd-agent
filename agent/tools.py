@@ -7,6 +7,7 @@ can call during its build loop. The community can vote to add more tools.
 
 import os
 import re
+import json
 
 # Base directory of the repository (set at runtime)
 REPO_DIR = os.environ.get("GITHUB_WORKSPACE", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -70,8 +71,6 @@ def search_files(pattern: str, case_sensitive: bool = False, max_results: int = 
     Returns:
         JSON string with search results including matches, total count, and metadata
     """
-    import json
-    
     # Compile regex pattern
     flags = 0 if case_sensitive else re.IGNORECASE
     try:

@@ -10,5 +10,13 @@
     "backoff_multiplier": 2,
     "agent_loop_timeout_seconds": 300,
     "tool_execution_timeout_seconds": 60
+  },
+  "feature_proposals": {
+    "enabled": true,
+    "proposals_per_build": 2,
+    "min_days_between_similar": 7,
+    "auto_label": "agent-proposed",
+    "require_approval": false,
+    "memory_retention_days": 90
   }
 }
