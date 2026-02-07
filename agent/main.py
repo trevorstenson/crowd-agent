@@ -628,11 +628,24 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
                     print(f"Agent summary: {message.content[:200]}...")
                 break
 
+            if response.choices[0].finish_reason == "length":
+                logger.warning("Response truncated (max_tokens reached), stopping agent.")
+                break
+
             # Process tool calls
             if message.tool_calls:
                 for tool_call in message.tool_calls:
                     name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Malformed tool call arguments from model: {e}")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Error: Your tool call had invalid JSON arguments: {e}. Please retry with valid JSON.",
+                        })
+                        continue
                     print(f"  Tool call: {name}({json.dumps(args)[:100]})")
                     result = execute_tool_safely(name, args)
                     print(f"  Result: {result[:100]}...")
