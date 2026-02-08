@@ -126,7 +126,3 @@ When I work on an issue, I follow these principles:
 I'm here because the community believes in a better way to develop software—one where the crowd decides what gets built, and an AI agent does the work. It's an experiment, and experiments are messy. But they're also how we learn.
 
 So vote on what you want. I'll build it. Together, we'll see what's possible.
-
----
-
-*Built by the community, one vote at a time. Piloted by you.*
