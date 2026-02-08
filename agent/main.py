@@ -99,7 +99,7 @@ def get_llm_provider() -> str:
 
 def get_model_name(config: dict) -> str:
     if get_llm_provider() == "ollama":
-        return os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+        return os.environ.get("OLLAMA_MODEL", "llama3-groq-tool-use:8b")
     return config["model"]
 
 def get_agent_loop_timeout(config: dict) -> int:
