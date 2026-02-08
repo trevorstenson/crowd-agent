@@ -119,6 +119,7 @@ def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: 
         client = openai.OpenAI(
             base_url="http://localhost:11434/v1",
             api_key="ollama",  # required by client but unused by Ollama
+            timeout=1800.0,  # 30 min — CPU inference is slow
         )
         response = client.chat.completions.create(
             model=model,
@@ -742,6 +743,7 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
     client = openai.OpenAI(
         base_url="http://localhost:11434/v1",
         api_key="ollama",
+        timeout=1800.0,  # 30 min — CPU inference is slow for large outputs
     )
     model = get_model_name(config)
     timeout_seconds = get_agent_loop_timeout(config)
