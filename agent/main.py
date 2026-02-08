@@ -681,6 +681,12 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
     prompt_text += (
         f"\n\n## Implementation Plan\n\n"
         f"Follow this plan to guide your implementation:\n\n{plan}"
+        "\n\n## CRITICAL INSTRUCTIONS\n\n"
+        "You MUST use the provided tools to complete this task. "
+        "Use `read_file` to examine files, then use `write_file` to make ALL your changes. "
+        "Do NOT just describe changes in text — actually call the `write_file` tool with the full updated file content. "
+        "Do NOT stop after reading files. You must write the modified files using the `write_file` tool. "
+        "Only respond with a text summary AFTER you have written all files."
     )
 
     messages = [
