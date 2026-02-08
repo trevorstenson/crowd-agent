@@ -92,6 +92,65 @@ def save_memory(memory: dict):
         json.dump(memory, f, indent=2)
         f.write("\n")
 
+# --- LLM Provider Abstraction ---
+
+def get_llm_provider() -> str:
+    return os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+def get_model_name(config: dict) -> str:
+    if get_llm_provider() == "ollama":
+        return os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+    return config["model"]
+
+def get_agent_loop_timeout(config: dict) -> int:
+    env_timeout = os.environ.get("AGENT_LOOP_TIMEOUT")
+    if env_timeout:
+        return int(env_timeout)
+    default = config.get("error_handling", {}).get("agent_loop_timeout_seconds", 300)
+    if get_llm_provider() == "ollama":
+        return max(default, 900)  # 15 min minimum for CPU inference
+    return default
+
+def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
+    """Simple LLM text completion. Works with both Anthropic and Ollama."""
+    model = get_model_name(config)
+    if get_llm_provider() == "ollama":
+        import openai
+        client = openai.OpenAI(
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",  # required by client but unused by Ollama
+        )
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content.strip()
+    else:
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+def _tools_to_openai_format(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic tool definitions to OpenAI function calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            }
+        }
+        for t in tools
+    ]
+
 # --- Error Classification ---
 
 def classify_api_error(exception: Exception) -> str:
@@ -344,8 +403,6 @@ def report_failure(repo, issue, error: str):
 
 def generate_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None) -> str:
     """Ask the agent to write a changelog entry. Returns the formatted markdown entry."""
-    client = anthropic.Anthropic()
-
     if success:
         prompt = (
             "You just completed a build for the Crowd Agent project. Write a short changelog entry.\n\n"
@@ -370,14 +427,7 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
             "Return ONLY the entry text, no heading or date."
         )
 
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=300,
-        temperature=0.7,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    entry_text = response.content[0].text.strip()
+    entry_text = llm_complete(config, prompt, max_tokens=300, temperature=0.7)
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     status_emoji = "+" if success else "x"
 
@@ -439,16 +489,8 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         '{"issue_number": <number>, "reason": "<1-2 sentence explanation>"}'
     )
 
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=256,
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
     try:
-        text = response.content[0].text.strip()
+        text = llm_complete(config, prompt, max_tokens=256, temperature=0)
         # Strip markdown fencing if the model wraps the JSON
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -471,7 +513,6 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
     except Exception as e:
         print(f"Warning: Could not vote on next issue: {e}")
-        print(f"Raw response: {response.content[0].text[:500] if response.content else '(empty)'}")
 
 
 def run_git(*args):
@@ -516,22 +557,20 @@ def get_repo_file_list() -> list[str]:
 
 @retry_on_transient_api_error
 def create_plan(issue, repo_files: list[str], config: dict) -> str:
-    """Ask Claude to create a plan for implementing the issue.
-    
+    """Ask the LLM to create a plan for implementing the issue.
+
     Returns the plan as a string.
     Retries on transient API errors.
     """
-    client = anthropic.Anthropic()
-    
     prompt = (
         f"## Task\n\nCreate a detailed plan for implementing this GitHub issue:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n"
         f"## Repository Structure\n\n"
     )
-    
+
     for path in repo_files:
         prompt += f"- `{path}`\n"
-    
+
     prompt += (
         "\n\n## Planning Instructions\n\n"
         "Create a clear, step-by-step plan that includes:\n"
@@ -541,30 +580,26 @@ def create_plan(issue, repo_files: list[str], config: dict) -> str:
         "4. **Potential challenges** — Note any tricky parts or edge cases\n\n"
         "Be specific and concrete. This plan will guide your implementation."
     )
-    
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=2000,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    
-    plan = response.content[0].text.strip()
+
+    plan = llm_complete(config, prompt, max_tokens=2000, temperature=0.3)
     print(f"Plan created:\n{plan[:500]}...\n")
     return plan
 
 def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
-    """Run the agent loop: call Claude with tools until done. Returns file changes.
-    
-    The agent is given the plan upfront to guide its implementation.
-    Includes timeout protection and graceful error handling for tool execution.
+    """Run the agent loop with tools until done. Returns file changes.
+
+    Dispatches to the appropriate provider (Anthropic or Ollama).
     """
+    if get_llm_provider() == "ollama":
+        return _run_agent_ollama(issue, repo_files, config, system_prompt, plan)
+    return _run_agent_anthropic(issue, repo_files, config, system_prompt, plan)
+
+def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop using the Anthropic API."""
     reset_file_changes()
     client = anthropic.Anthropic()
-    error_config = config.get("error_handling", {})
-    timeout_seconds = error_config.get("agent_loop_timeout_seconds", 300)
+    timeout_seconds = get_agent_loop_timeout(config)
 
-    # Build the prompt with the plan included
     prompt_text = build_prompt(issue, repo_files)
     prompt_text += (
         f"\n\n## Implementation Plan\n\n"
@@ -577,14 +612,12 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
 
     with TimeoutHandler(timeout_seconds) as timeout_handler:
         for turn in range(config["max_turns"]):
-            # Check timeout before each turn
             timeout_handler.check()
-            
             print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
 
             try:
                 response = client.messages.create(
-                    model=config["model"],
+                    model=get_model_name(config),
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
                     system=system_prompt,
@@ -603,19 +636,15 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
                 logger.error(f"API error on turn {turn + 1}: {e}")
                 raise
 
-            # Collect assistant content
             assistant_content = response.content
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # Check if done
             if response.stop_reason == "end_turn":
-                # Extract final text
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         print(f"Agent summary: {block.text[:200]}...")
                 break
 
-            # Process tool calls
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
@@ -635,6 +664,96 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
 
     return get_file_changes()
 
+def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop using Ollama's OpenAI-compatible API."""
+    import openai
+
+    reset_file_changes()
+    client = openai.OpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",
+    )
+    model = get_model_name(config)
+    timeout_seconds = get_agent_loop_timeout(config)
+    openai_tools = _tools_to_openai_format(TOOL_DEFINITIONS)
+
+    prompt_text = build_prompt(issue, repo_files)
+    prompt_text += (
+        f"\n\n## Implementation Plan\n\n"
+        f"Follow this plan to guide your implementation:\n\n{plan}"
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt_text},
+    ]
+
+    with TimeoutHandler(timeout_seconds) as timeout_handler:
+        for turn in range(config["max_turns"]):
+            timeout_handler.check()
+            print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
+
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    max_tokens=config["max_tokens"],
+                    temperature=config["temperature"],
+                    messages=messages,
+                    tools=openai_tools,
+                )
+            except openai.RateLimitError as e:
+                logger.warning(f"Rate limit error on turn {turn + 1}, retrying: {e}")
+                time.sleep(2)
+                continue
+            except openai.APITimeoutError as e:
+                logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
+                time.sleep(2)
+                continue
+            except openai.BadRequestError as e:
+                if "tool_use_failed" in str(e):
+                    logger.warning(f"Model generated malformed tool call on turn {turn + 1}, retrying")
+                    messages.append({
+                        "role": "user",
+                        "content": "Your previous tool call was malformed. Use the provided tools correctly by passing proper JSON arguments.",
+                    })
+                    continue
+                logger.error(f"API error on turn {turn + 1}: {e}")
+                raise
+            except openai.APIError as e:
+                logger.error(f"API error on turn {turn + 1}: {e}")
+                raise
+
+            message = response.choices[0].message
+            messages.append(message)
+
+            if response.choices[0].finish_reason == "stop":
+                if message.content:
+                    print(f"Agent summary: {message.content[:200]}...")
+                break
+
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    name = tool_call.function.name
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Malformed tool arguments: {tool_call.function.arguments[:200]}")
+                        messages.append({"role": "tool", "tool_call_id": tool_call.id,
+                                         "content": f"Error: Could not parse tool arguments: {e}"})
+                        continue
+                    print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+                    result = execute_tool_safely(name, args)
+                    print(f"  Result: {result[:100]}...")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result,
+                    })
+        else:
+            logger.warning("Agent reached max turns without finishing.")
+
+    return get_file_changes()
+
 
 # --- Main ---
 
@@ -643,6 +762,7 @@ def main():
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
 
     config = load_config()
+    print(f"LLM Provider: {get_llm_provider()}, Model: {get_model_name(config)}")
     system_prompt = load_system_prompt()
     memory = load_memory()
 
