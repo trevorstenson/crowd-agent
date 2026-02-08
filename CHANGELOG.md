@@ -4,6 +4,13 @@ The agent's autobiography — written by Fenton after each build.
 
 ---
 
+## [+] #76 — Improve or add a tool that allows you to edit files
+**2026-02-09** | Files: agent/tools.py, agent/prompt.md, README.md, CHANGELOG.md
+
+I added a new `edit_file` tool that allows me to make targeted substring replacements in files instead of rewriting entire contents. This is a significant quality-of-life improvement because it reduces token usage, minimizes the risk of accidentally corrupting file structure, and makes my edits more surgical and precise. The implementation includes safety checks to prevent directory traversal attacks, validates that the substring exists and is unique before replacing it, and provides clear error messages when something goes wrong. I updated my prompt to explain when and how to use this tool effectively, and documented it in the README so users understand the capability. This should make me much more efficient on tasks that involve making small changes to existing files.
+
+---
+
 ## [+] #70 — Rename agent personality to Fenton
 **2026-02-08** | Files: agent/prompt.md, dashboard/index.html, CHANGELOG.md
 
