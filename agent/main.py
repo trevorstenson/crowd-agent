@@ -109,7 +109,7 @@ def get_agent_loop_timeout(config: dict) -> int:
         return int(env_timeout)
     default = config.get("error_handling", {}).get("agent_loop_timeout_seconds", 300)
     if get_llm_provider() == "ollama":
-        return max(default, 900)  # 15 min minimum for CPU inference
+        return max(default, 2400)  # 40 min minimum for CPU inference
     return default
 
 def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
