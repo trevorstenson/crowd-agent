@@ -29,6 +29,36 @@ The agent is a ~200-line Python script ([`agent/main.py`](agent/main.py)) that:
 
 Its tools, personality, and behavior are all defined in editable files that the community controls.
 
+## Agent Tools
+
+The agent has access to the following tools:
+
+### read_file
+Read the contents of a file in the repository.
+
+### write_file
+Write or overwrite a file in the repository.
+
+### edit_file
+Edit a file by finding and replacing a substring. This is more efficient than rewriting entire files.
+
+**Example:**
+```python
+edit_file(
+    path="config.json",
+    old_string='"debug": false',
+    new_string='"debug": true'
+)
+```
+
+This tool reduces token usage and improves reliability by allowing targeted edits instead of full file rewrites.
+
+### list_files
+List files and directories in a given directory.
+
+### search_files
+Search for text patterns across the repository using regex patterns.
+
 ## Rules
 
 See the [Constitution](CONSTITUTION.md) for governance rules, including protected files and amendment procedures.
