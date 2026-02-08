@@ -40,6 +40,65 @@ def write_file(path: str, content: str) -> str:
         return f"Error writing file: {e}"
 
 
+def edit_file(path: str, old_string: str, new_string: str) -> str:
+    """
+    Edit a file by finding and replacing a substring.
+    
+    Args:
+        path: Path to file to edit (relative to repository root)
+        old_string: Exact substring to find and replace (case-sensitive)
+        new_string: Replacement text
+    
+    Returns:
+        Success or error message with details
+    """
+    # Validate inputs
+    if not path:
+        return "Error: File path cannot be empty"
+    if old_string == "":
+        return "Error: old_string cannot be empty"
+    
+    # Security check: prevent directory traversal
+    full_path = os.path.join(REPO_DIR, path)
+    full_path = os.path.abspath(full_path)
+    repo_dir_abs = os.path.abspath(REPO_DIR)
+    
+    if not full_path.startswith(repo_dir_abs):
+        return f"Error: Path traversal not allowed: {path}"
+    
+    # Check file exists and is readable
+    if not os.path.isfile(full_path):
+        return f"Error: File not found: {path}"
+    
+    try:
+        # Read the file
+        with open(full_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return f"Error reading file: {e}"
+    
+    # Check if old_string exists
+    if old_string not in content:
+        return f"Error: Substring not found in {path}. The exact string to replace was not found."
+    
+    # Count occurrences
+    count = content.count(old_string)
+    if count > 1:
+        return f"Error: Found {count} occurrences of the substring in {path}. Please provide more context to make the match unique."
+    
+    # Perform replacement
+    new_content = content.replace(old_string, new_string)
+    
+    try:
+        # Write the file
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        file_changes[path] = new_content
+        return f"Successfully edited {path}: replaced 1 occurrence"
+    except Exception as e:
+        return f"Error writing file: {e}"
+
+
 def list_files(directory: str = ".") -> str:
     """List files in a directory of the repository."""
     full_path = os.path.join(REPO_DIR, directory)
@@ -169,6 +228,28 @@ TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "edit_file",
+        "description": "Edit a file by finding and replacing a substring. Use this for targeted edits instead of rewriting entire files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file relative to the repository root."
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact substring to find and replace (case-sensitive). Must be unique in the file."
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement text."
+                }
+            },
+            "required": ["path", "old_string", "new_string"]
+        }
+    },
+    {
         "name": "list_files",
         "description": "List files and directories in a given directory.",
         "input_schema": {
@@ -213,6 +294,7 @@ TOOL_DEFINITIONS = [
 TOOL_FUNCTIONS = {
     "read_file": read_file,
     "write_file": write_file,
+    "edit_file": edit_file,
     "list_files": list_files,
     "search_files": search_files,
 }
