@@ -16,6 +16,7 @@ how the agent works, what tools it has, and how it makes decisions.
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -666,7 +667,13 @@ def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prom
     return get_file_changes()
 
 def _parse_tool_call(content: str):
-    """Parse a tool call from model text output. Returns (name, args) or None."""
+    """Parse a tool call from model text output. Returns (name, args) or None.
+
+    Handles common issues with small models:
+    - Literal newlines inside JSON string values (should be \\n)
+    - JSON embedded in surrounding text
+    - Markdown code fences around JSON
+    """
     content = content.strip()
 
     # Strip markdown code fences if present
@@ -674,7 +681,7 @@ def _parse_tool_call(content: str):
         content = content.split("\n", 1)[1] if "\n" in content else content[3:]
         content = content.rsplit("```", 1)[0].strip()
 
-    # Try parsing the whole content as JSON
+    # Try parsing the whole content as JSON directly
     try:
         obj = json.loads(content)
         if isinstance(obj, dict) and "tool" in obj and "args" in obj:
@@ -682,8 +689,19 @@ def _parse_tool_call(content: str):
     except json.JSONDecodeError:
         pass
 
-    # Find the outermost {...} containing "tool" — handles nested JSON in write_file content
-    import re
+    # Try with escaped newlines — models often output literal newlines inside
+    # JSON string values instead of proper \n escapes. Since we instruct the
+    # model to output a single-line JSON object, any literal newlines are
+    # inside string values and should be escaped.
+    try:
+        fixed = content.replace('\r\n', '\\n').replace('\n', '\\n')
+        obj = json.loads(fixed)
+        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
+            return obj["tool"], obj["args"]
+    except json.JSONDecodeError:
+        pass
+
+    # Brace-depth extraction — find outermost {...} containing "tool"
     depth = 0
     start = -1
     for i, c in enumerate(content):
@@ -702,7 +720,46 @@ def _parse_tool_call(content: str):
                             return obj["tool"], obj["args"]
                     except json.JSONDecodeError:
                         pass
+                    # Try with escaped newlines on the extracted candidate
+                    try:
+                        fixed = candidate.replace('\r\n', '\\n').replace('\n', '\\n')
+                        obj = json.loads(fixed)
+                        if "tool" in obj and "args" in obj:
+                            return obj["tool"], obj["args"]
+                    except json.JSONDecodeError:
+                        pass
                 start = -1
+
+    # Regex fallback — extract tool call from malformed JSON (e.g. unescaped
+    # quotes inside write_file content that break json.loads even after
+    # newline escaping)
+    tool_match = re.search(r'"tool"\s*:\s*"(\w+)"', content)
+    if tool_match:
+        tool_name = tool_match.group(1)
+        if tool_name == "write_file":
+            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            content_start = re.search(r'"content"\s*:\s*"', content)
+            if path_match and content_start:
+                cs = content_start.end()
+                # Find the closing "}} at the end of the response
+                end_match = re.search(r'"\s*\}\s*\}\s*$', content)
+                if end_match:
+                    file_content = content[cs:end_match.start()]
+                    # Unescape any \n the model did properly escape
+                    file_content = file_content.replace('\\n', '\n')
+                    file_content = file_content.replace('\\"', '"')
+                    return tool_name, {"path": path_match.group(1), "content": file_content}
+        elif tool_name == "read_file":
+            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            if path_match:
+                return tool_name, {"path": path_match.group(1)}
+        elif tool_name == "list_files":
+            dir_match = re.search(r'"directory"\s*:\s*"([^"]*)"', content)
+            return tool_name, {"directory": dir_match.group(1) if dir_match else "."}
+        elif tool_name == "search_files":
+            pattern_match = re.search(r'"pattern"\s*:\s*"([^"]+)"', content)
+            if pattern_match:
+                return tool_name, {"pattern": pattern_match.group(1)}
 
     return None
 
@@ -732,6 +789,7 @@ def _build_tool_prompt() -> str:
         '- Call ONE tool per response\n'
         '- Respond with ONLY the JSON object — no explanation, no markdown fences\n'
         '- First read_file to see current content, then write_file with the COMPLETE updated content\n'
+        '- IMPORTANT: In write_file content, use \\n for newlines — do NOT use literal line breaks inside the JSON string\n'
         '- When you are done making ALL changes, respond with a plain text summary (no JSON)\n'
     )
 
