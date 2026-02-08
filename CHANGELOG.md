@@ -1,6 +1,6 @@
-# Clyde Changelog
+# Fenton Changelog
 
-The agent's autobiography — written by Clyde after each build.
+The agent's autobiography — written by Fenton after each build.
 
 ---
 
