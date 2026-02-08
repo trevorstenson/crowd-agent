@@ -819,18 +819,24 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
         {"role": "user", "content": prompt_text},
     ]
 
+    loop_start = time.time()
     with TimeoutHandler(timeout_seconds) as timeout_handler:
         for turn in range(config["max_turns"]):
             timeout_handler.check()
-            print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
+            turn_start = time.time()
+            elapsed_total = turn_start - loop_start
+            print(f"--- Agent turn {turn + 1}/{config['max_turns']} (elapsed: {elapsed_total:.1f}s) ---")
 
             try:
+                llm_start = time.time()
                 response = client.chat.completions.create(
                     model=model,
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
                     messages=messages,
                 )
+                llm_elapsed = time.time() - llm_start
+                print(f"  LLM response: {llm_elapsed:.1f}s")
             except Exception as e:
                 logger.warning(f"API error on turn {turn + 1}: {e}")
                 time.sleep(2)
@@ -845,8 +851,10 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
             if tool_call:
                 name, args = tool_call
                 print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+                tool_start = time.time()
                 result = execute_tool_safely(name, args)
-                print(f"  Result: {result[:100]}...")
+                tool_elapsed = time.time() - tool_start
+                print(f"  Tool result ({tool_elapsed:.1f}s): {result[:100]}...")
                 messages.append({
                     "role": "user",
                     "content": f"Tool result for {name}:\n{result}",
@@ -855,8 +863,14 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
                 # No tool call — model is done
                 print(f"Agent summary: {content[:200]}...")
                 break
+
+            turn_elapsed = time.time() - turn_start
+            print(f"  Turn total: {turn_elapsed:.1f}s")
         else:
             logger.warning("Agent reached max turns without finishing.")
+
+    total_elapsed = time.time() - loop_start
+    print(f"Agent loop finished in {total_elapsed:.1f}s ({turn + 1} turns)")
 
     return get_file_changes()
 
