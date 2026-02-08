@@ -99,7 +99,7 @@ def get_llm_provider() -> str:
 
 def get_model_name(config: dict) -> str:
     if get_llm_provider() == "ollama":
-        return os.environ.get("OLLAMA_MODEL", "llama3-groq-tool-use:8b")
+        return os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
     return config["model"]
 
 def get_agent_loop_timeout(config: dict) -> int:
@@ -664,8 +664,78 @@ def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prom
 
     return get_file_changes()
 
+def _parse_tool_call(content: str):
+    """Parse a tool call from model text output. Returns (name, args) or None."""
+    content = content.strip()
+
+    # Strip markdown code fences if present
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+        content = content.rsplit("```", 1)[0].strip()
+
+    # Try parsing the whole content as JSON
+    try:
+        obj = json.loads(content)
+        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
+            return obj["tool"], obj["args"]
+    except json.JSONDecodeError:
+        pass
+
+    # Find the outermost {...} containing "tool" — handles nested JSON in write_file content
+    import re
+    depth = 0
+    start = -1
+    for i, c in enumerate(content):
+        if c == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = content[start:i + 1]
+                if '"tool"' in candidate:
+                    try:
+                        obj = json.loads(candidate)
+                        if "tool" in obj and "args" in obj:
+                            return obj["tool"], obj["args"]
+                    except json.JSONDecodeError:
+                        pass
+                start = -1
+
+    return None
+
+def _build_tool_prompt() -> str:
+    """Build a prompt section describing available tools and the JSON calling convention."""
+    tool_lines = []
+    for t in TOOL_DEFINITIONS:
+        params = t["input_schema"].get("properties", {})
+        required = t["input_schema"].get("required", [])
+        param_desc = ", ".join(
+            f'"{k}" ({v.get("type", "string")}, {"required" if k in required else "optional"}): {v.get("description", "")}'
+            for k, v in params.items()
+        )
+        tool_lines.append(f'- **{t["name"]}**: {t["description"]}\n  Parameters: {param_desc}')
+
+    return (
+        "## Available Tools\n\n"
+        + "\n\n".join(tool_lines)
+        + '\n\n## How to Call Tools\n\n'
+        'To call a tool, respond with ONLY a JSON object in this exact format:\n'
+        '{"tool": "<tool_name>", "args": {<arguments>}}\n\n'
+        'Examples:\n'
+        '{"tool": "read_file", "args": {"path": "agent/prompt.md"}}\n'
+        '{"tool": "write_file", "args": {"path": "README.md", "content": "# Hello"}}\n'
+        '{"tool": "list_files", "args": {"directory": "."}}\n\n'
+        'RULES:\n'
+        '- Call ONE tool per response\n'
+        '- Respond with ONLY the JSON object — no explanation, no markdown fences\n'
+        '- First read_file to see current content, then write_file with the COMPLETE updated content\n'
+        '- When you are done making ALL changes, respond with a plain text summary (no JSON)\n'
+    )
+
 def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
-    """Run the agent loop using Ollama's OpenAI-compatible API."""
+    """Run the agent loop using Ollama with structured JSON tool calls parsed from text."""
     import openai
 
     reset_file_changes()
@@ -675,22 +745,17 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
     )
     model = get_model_name(config)
     timeout_seconds = get_agent_loop_timeout(config)
-    openai_tools = _tools_to_openai_format(TOOL_DEFINITIONS)
 
     prompt_text = build_prompt(issue, repo_files)
     prompt_text += (
         f"\n\n## Implementation Plan\n\n"
         f"Follow this plan to guide your implementation:\n\n{plan}"
-        "\n\n## CRITICAL INSTRUCTIONS\n\n"
-        "You MUST use the provided tools to complete this task. "
-        "Use `read_file` to examine files, then use `write_file` to make ALL your changes. "
-        "Do NOT just describe changes in text — actually call the `write_file` tool with the full updated file content. "
-        "Do NOT stop after reading files. You must write the modified files using the `write_file` tool. "
-        "Only respond with a text summary AFTER you have written all files."
     )
 
+    tool_prompt = _build_tool_prompt()
+
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
         {"role": "user", "content": prompt_text},
     ]
 
@@ -705,56 +770,31 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
                     messages=messages,
-                    tools=openai_tools,
                 )
-            except openai.RateLimitError as e:
-                logger.warning(f"Rate limit error on turn {turn + 1}, retrying: {e}")
+            except Exception as e:
+                logger.warning(f"API error on turn {turn + 1}: {e}")
                 time.sleep(2)
                 continue
-            except openai.APITimeoutError as e:
-                logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
-                time.sleep(2)
-                continue
-            except openai.BadRequestError as e:
-                if "tool_use_failed" in str(e):
-                    logger.warning(f"Model generated malformed tool call on turn {turn + 1}, retrying")
-                    messages.append({
-                        "role": "user",
-                        "content": "Your previous tool call was malformed. Use the provided tools correctly by passing proper JSON arguments.",
-                    })
-                    continue
-                logger.error(f"API error on turn {turn + 1}: {e}")
-                raise
-            except openai.APIError as e:
-                logger.error(f"API error on turn {turn + 1}: {e}")
-                raise
 
-            message = response.choices[0].message
-            messages.append(message)
+            content = (response.choices[0].message.content or "").strip()
+            messages.append({"role": "assistant", "content": content})
 
-            if response.choices[0].finish_reason == "stop":
-                if message.content:
-                    print(f"Agent summary: {message.content[:200]}...")
+            # Try to parse a tool call from the text
+            tool_call = _parse_tool_call(content)
+
+            if tool_call:
+                name, args = tool_call
+                print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+                result = execute_tool_safely(name, args)
+                print(f"  Result: {result[:100]}...")
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool result for {name}:\n{result}",
+                })
+            else:
+                # No tool call — model is done
+                print(f"Agent summary: {content[:200]}...")
                 break
-
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    name = tool_call.function.name
-                    try:
-                        args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Malformed tool arguments: {tool_call.function.arguments[:200]}")
-                        messages.append({"role": "tool", "tool_call_id": tool_call.id,
-                                         "content": f"Error: Could not parse tool arguments: {e}"})
-                        continue
-                    print(f"  Tool call: {name}({json.dumps(args)[:100]})")
-                    result = execute_tool_safely(name, args)
-                    print(f"  Result: {result[:100]}...")
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    })
         else:
             logger.warning("Agent reached max turns without finishing.")
 
