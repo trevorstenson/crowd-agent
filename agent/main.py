@@ -100,7 +100,7 @@ def get_llm_provider() -> str:
 
 def get_model_name(config: dict) -> str:
     if get_llm_provider() == "ollama":
-        return os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+        return os.environ.get("OLLAMA_MODEL", "qwen3:8b")
     return config["model"]
 
 def get_agent_loop_timeout(config: dict) -> int:
@@ -814,8 +814,12 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
 
     tool_prompt = _build_tool_prompt()
 
+    # Disable Qwen3 thinking mode for faster responses — /no_think
+    # skips the internal reasoning chain, saving significant CPU time
+    ollama_system = system_prompt + "\n\n" + tool_prompt + "\n\n/no_think"
+
     messages = [
-        {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
+        {"role": "system", "content": ollama_system},
         {"role": "user", "content": prompt_text},
     ]
 
