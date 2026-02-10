@@ -8,7 +8,7 @@ on:
       model:
         description: 'Ollama model to use'
         required: false
-        default: 'qwen2.5:7b'
+        default: 'qwen3:8b'
 
 permissions:
   contents: write
@@ -42,6 +42,10 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
 
       - name: Start Ollama server
+        env:
+          OLLAMA_FLASH_ATTENTION: '1'
+          OLLAMA_KV_CACHE_TYPE: q8_0
+          OLLAMA_KEEP_ALIVE: '-1'
         run: |
           ollama serve &
           # Wait for Ollama to be ready
@@ -55,19 +59,19 @@ jobs:
           done
 
       - name: Pull model
-        run: ollama pull ${{ github.event.inputs.model || 'qwen2.5:7b' }}
+        run: ollama pull ${{ github.event.inputs.model || 'qwen3:8b' }}
 
       - name: Smoke test inference
         run: |
           curl -sf http://localhost:11434/v1/chat/completions \
             -H "Content-Type: application/json" \
-            -d '{"model": "${{ github.event.inputs.model || 'qwen2.5:7b' }}", "messages": [{"role": "user", "content": "Say hello in one word."}], "max_tokens": 10}' \
+            -d '{"model": "${{ github.event.inputs.model || 'qwen3:8b' }}", "messages": [{"role": "user", "content": "Say hello in one word."}], "max_tokens": 10}' \
             | python -c "import sys, json; r = json.load(sys.stdin); print('Smoke test passed:', r['choices'][0]['message']['content'])"
 
       - name: Run agent
         env:
           LLM_PROVIDER: ollama
-          OLLAMA_MODEL: ${{ github.event.inputs.model || 'qwen2.5:7b' }}
+          OLLAMA_MODEL: ${{ github.event.inputs.model || 'qwen3:8b' }}
           GH_PAT: ${{ steps.app-token.outputs.token }}
           BOT_LOGIN: crowd-agent-bot[bot]
           REPO_OWNER: ${{ github.repository_owner }}
