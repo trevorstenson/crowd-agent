@@ -28,6 +28,8 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - uses: actions/checkout@v4
+        with:
+          ref: local-agent
 
       - uses: actions/setup-python@v5
         with:
