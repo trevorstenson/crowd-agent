@@ -814,12 +814,8 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
 
     tool_prompt = _build_tool_prompt()
 
-    # Disable Qwen3 thinking mode for faster responses — /no_think
-    # skips the internal reasoning chain, saving significant CPU time
-    ollama_system = system_prompt + "\n\n" + tool_prompt + "\n\n/no_think"
-
     messages = [
-        {"role": "system", "content": ollama_system},
+        {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
         {"role": "user", "content": prompt_text},
     ]
 
