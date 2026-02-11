@@ -9,6 +9,12 @@ The agent modifies itself.
 ## Project Structure
 
 crowd-agent/
+├── .git/
+├── .github/
+│   └── workflows/
+├── CHANGELOG.md
+├── CONSTITUTION.md
+├── README.md
 ├── agent/
 │   ├── __pycache__/
 │   ├── checkpoint.py
@@ -19,12 +25,6 @@ crowd-agent/
 │   ├── tools.py
 │   └── twitter.py
 ├── dashboard/
-├── .github/
-│   └── workflows/
-├── .git/
-├── CHANGELOG.md
-├── CONSTITUTION.md
-├── README.md
 └── requirements.txt
 
 ## How It Works
