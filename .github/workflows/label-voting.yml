@@ -1,0 +1,26 @@
+name: Label Voting Issues
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    # Skip issues created by the bot (e.g. build failure reports)
+    if: github.actor != 'crowd-agent-bot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Add voting label
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh issue edit ${{ github.event.issue.number }} --add-label "voting" -R ${{ github.repository }}
