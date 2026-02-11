@@ -694,8 +694,13 @@ def _parse_tool_call(content: str):
     # Try parsing the whole content as JSON directly
     try:
         obj = json.loads(content)
-        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
-            return obj["tool"], obj["args"]
+        if isinstance(obj, dict) and "tool" in obj:
+            args = obj.get("args", obj)
+            # Normalize common key mistakes: "file" → "path"
+            if "file" in args and "path" not in args:
+                args["path"] = args.pop("file")
+            if "args" in obj:
+                return obj["tool"], args
     except json.JSONDecodeError:
         pass
 
@@ -747,7 +752,7 @@ def _parse_tool_call(content: str):
     if tool_match:
         tool_name = tool_match.group(1)
         if tool_name == "write_file":
-            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            path_match = re.search(r'"(?:path|file)"\s*:\s*"([^"]+)"', content)
             content_start = re.search(r'"content"\s*:\s*"', content)
             if path_match and content_start:
                 cs = content_start.end()
@@ -760,7 +765,7 @@ def _parse_tool_call(content: str):
                     file_content = file_content.replace('\\"', '"')
                     return tool_name, {"path": path_match.group(1), "content": file_content}
         elif tool_name == "read_file":
-            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            path_match = re.search(r'"(?:path|file)"\s*:\s*"([^"]+)"', content)
             if path_match:
                 return tool_name, {"path": path_match.group(1)}
         elif tool_name == "list_files":
