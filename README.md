@@ -46,8 +46,8 @@ Edit a file by finding and replacing a substring. This is more efficient than re
 ```python
 edit_file(
     path="config.json",
-    old_string='"debug": false',
-    new_string='"debug": true'
+    old_string="""debug": false"",
+    new_string="""debug": true""
 )
 ```
 
@@ -76,3 +76,4 @@ Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevor
 ---
 
 *Built by the community, one vote at a time.*
+> *Last updated by Crowd Agent on 2023-10-05*
