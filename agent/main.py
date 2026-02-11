@@ -40,6 +40,16 @@ from tools import (
     get_file_changes,
     reset_file_changes,
 )
+from checkpoint import (
+    CHECKPOINT_FILE,
+    save_checkpoint,
+    load_checkpoint,
+    build_continuation_prompt,
+    append_action_log,
+    trigger_next_workflow,
+    should_finalize,
+    remove_checkpoint,
+)
 from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
 
 # --- Logging Setup ---
@@ -875,9 +885,170 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
     return get_file_changes()
 
 
+# --- Workflow Chaining (single-turn per workflow run) ---
+
+def run_single_turn_ollama(checkpoint: dict, config: dict, system_prompt: str) -> dict:
+    """Execute exactly ONE LLM turn for workflow chaining.
+
+    Builds a minimal prompt from the checkpoint, makes one LLM call,
+    executes one tool (if any), and updates the checkpoint.
+
+    Returns the updated checkpoint dict.
+    """
+    import openai
+
+    client = openai.OpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",
+        timeout=1800.0,
+    )
+    model = checkpoint.get("model", get_model_name(config))
+
+    messages = build_continuation_prompt(checkpoint, system_prompt)
+
+    turn = checkpoint.get("turn", 0) + 1
+    checkpoint["turn"] = turn
+    print(f"--- Chained turn {turn}/{checkpoint.get('max_turns', 10)} (chain_depth={checkpoint.get('chain_depth', 0)}) ---")
+
+    llm_start = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"],
+            messages=messages,
+        )
+    except Exception as e:
+        logger.error(f"LLM call failed on turn {turn}: {e}")
+        checkpoint["status"] = "error"
+        checkpoint["error"] = str(e)
+        return checkpoint
+
+    llm_elapsed = time.time() - llm_start
+    print(f"  LLM response: {llm_elapsed:.1f}s")
+
+    content = (response.choices[0].message.content or "").strip()
+
+    # Check if agent says it's done
+    if content.upper().startswith("DONE:") or content.upper().startswith("DONE "):
+        print(f"Agent finished: {content[:200]}...")
+        checkpoint["status"] = "done"
+        checkpoint["final_summary"] = content
+        return checkpoint
+
+    # Try to parse a tool call
+    tool_call = _parse_tool_call(content)
+
+    if tool_call:
+        name, args = tool_call
+        print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+        tool_start = time.time()
+        result = execute_tool_safely(name, args)
+        tool_elapsed = time.time() - tool_start
+        print(f"  Tool result ({tool_elapsed:.1f}s): {result[:100]}...")
+
+        # Update checkpoint
+        append_action_log(checkpoint, name, args, result)
+
+        # Track modified files across all turns
+        turn_changes = get_file_changes()
+        for fpath in turn_changes:
+            if fpath not in checkpoint.get("files_modified", []):
+                checkpoint.setdefault("files_modified", []).append(fpath)
+    else:
+        # No tool call and no DONE: — model is done
+        print(f"Agent summary (no tool call): {content[:200]}...")
+        checkpoint["status"] = "done"
+        checkpoint["final_summary"] = content
+
+    return checkpoint
+
+
+def create_agent_branch(issue) -> str:
+    """Create an agent branch for the issue from current HEAD and push it."""
+    branch_name = f"agent/issue-{issue.number}"
+
+    run_git("config", "user.name", "Crowd Agent[bot]")
+    run_git("config", "user.email", "crowd-agent-bot@users.noreply.github.com")
+
+    # Delete local branch if it exists, then create fresh
+    try:
+        run_git("branch", "-D", branch_name)
+    except RuntimeError:
+        pass
+    run_git("checkout", "-b", branch_name)
+
+    # Set up authenticated remote
+    token = os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("Neither GH_PAT nor GITHUB_TOKEN is set.")
+    owner = os.environ.get("REPO_OWNER", "trevorstenson")
+    name = os.environ.get("REPO_NAME", "crowd-agent")
+    remote_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
+    run_git("remote", "set-url", "origin", remote_url)
+    run_git("push", "--force", "--set-upstream", "origin", branch_name)
+
+    print(f"Created and pushed branch: {branch_name}")
+    return branch_name
+
+
+def commit_turn_changes(checkpoint: dict, turn_files: list[str]):
+    """Commit this turn's file edits + checkpoint to the agent branch."""
+    save_checkpoint(checkpoint, turn_files)
+
+
+def create_pr_from_branch(repo, issue, checkpoint: dict, changelog_text: str = "") -> str:
+    """Create a PR from the existing agent branch. Returns PR URL."""
+    branch_name = checkpoint["branch"]
+    base_branch = repo.default_branch
+
+    files_modified = checkpoint.get("files_modified", [])
+    files_str = ", ".join(files_modified) if files_modified else "(none)"
+
+    commit_msg = f"feat: implement #{issue.number} — {issue.title}"
+    pr_body = (
+        f"Closes #{issue.number}\n\n"
+        f"**Issue:** {issue.title}\n\n"
+        f"This PR was automatically generated by Crowd Agent (workflow chaining, "
+        f"{checkpoint.get('chain_depth', 0)} workflow runs).\n\n"
+        f"**Files changed:** {files_str}\n\n"
+        f"Please review and approve to merge."
+    )
+    if changelog_text:
+        pr_body += (
+            f"\n\n<!-- CHANGELOG_START -->\n{changelog_text}<!-- CHANGELOG_END -->"
+        )
+
+    pr = repo.create_pull(
+        title=commit_msg,
+        body=pr_body,
+        head=branch_name,
+        base=base_branch,
+    )
+    print(f"Created PR #{pr.number}: {pr.html_url}")
+    return pr.html_url
+
+
 # --- Main ---
 
 def main():
+    """Entry point — dispatches to fresh, fresh-chained, or continuation path."""
+    checkpoint_branch = os.environ.get("CHECKPOINT_BRANCH", "")
+    chaining_enabled = os.environ.get("WORKFLOW_CHAINING", "").lower() == "true"
+
+    if checkpoint_branch:
+        return main_continuation(checkpoint_branch)
+    elif chaining_enabled and get_llm_provider() == "ollama":
+        return main_fresh_chained()
+    else:
+        return main_fresh()
+
+
+def main_fresh():
+    """Original behavior — full agent loop in a single workflow run.
+
+    Used for the Anthropic path and non-chained Ollama path.
+    """
     print("=== Crowd Agent Nightly Build ===")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
 
@@ -991,6 +1162,244 @@ def main():
                 logger.warning(f"Could not tweet build failure: {twit_err}")
 
         sys.exit(1)
+
+
+def main_fresh_chained():
+    """First run of a chained workflow — find issue, plan, run one turn, trigger next."""
+    print("=== Crowd Agent Chained Build (Fresh) ===")
+    print(f"Time: {datetime.now(timezone.utc).isoformat()}")
+
+    config = load_config()
+    model = get_model_name(config)
+    print(f"LLM Provider: {get_llm_provider()}, Model: {model}")
+    system_prompt = load_system_prompt()
+
+    gh = get_github()
+    repo = get_repo(gh)
+
+    issue = None
+    try:
+        # Step 1: Find the winning issue
+        issue = find_winning_issue(repo, gh)
+        if issue is None:
+            print("No issues to build. Exiting.")
+            return
+
+        # Step 2: Announce the build
+        announce_build(repo, issue)
+
+        # Tweet about the build starting
+        try:
+            owner = os.environ.get("REPO_OWNER", "trevorstenson")
+            repo_name = os.environ.get("REPO_NAME", "crowd-agent")
+            dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
+            tweet_build_start(issue.title, issue.number, owner, repo_name, dry_run=dry_run)
+        except Exception as e:
+            logger.warning(f"Could not tweet build start: {e}")
+
+        # Step 3: Get repo context
+        repo_files = get_repo_file_list()
+
+        # Step 4: Create a plan (LLM call #1)
+        try:
+            plan = create_plan(issue, repo_files, config)
+        except (PermanentAPIError, TransientAPIError, RetryError) as e:
+            raise RuntimeError(f"Failed to create plan: {e}")
+
+        # Step 5: Create agent branch
+        branch_name = create_agent_branch(issue)
+
+        # Step 6: Initialize checkpoint
+        chaining_config = config.get("chaining", {})
+        checkpoint = {
+            "version": 1,
+            "issue_number": issue.number,
+            "issue_title": issue.title,
+            "issue_body": issue.body or "(no description)",
+            "plan": plan,
+            "branch": branch_name,
+            "turn": 0,
+            "max_turns": config.get("max_turns", 10),
+            "chain_depth": 1,
+            "max_chain_depth": chaining_config.get("max_chain_depth", 15),
+            "status": "in_progress",
+            "files_modified": [],
+            "action_log": [],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "model": model,
+            "repo_files_snapshot": repo_files,
+        }
+
+        # Step 7: Run one turn (LLM call #2)
+        reset_file_changes()
+        checkpoint = run_single_turn_ollama(checkpoint, config, system_prompt)
+
+        # Step 8: Commit file edits + checkpoint to branch
+        turn_files = list(get_file_changes().keys())
+        commit_turn_changes(checkpoint, turn_files)
+
+        # Step 9: Check if we're already done, otherwise trigger next
+        if should_finalize(checkpoint):
+            _finalize_chain(repo, issue, checkpoint, config)
+        else:
+            trigger_next_workflow(checkpoint)
+            print("Fresh chained run complete — next workflow triggered.")
+
+    except Exception as e:
+        logger.error(f"Chained build (fresh) failed: {e}", exc_info=True)
+        print(f"Build failed: {e}")
+
+        if issue:
+            try:
+                report_failure(repo, issue, str(e))
+            except Exception as report_err:
+                logger.error(f"Failed to report failure: {report_err}")
+
+        sys.exit(1)
+
+
+def main_continuation(checkpoint_branch: str):
+    """Subsequent run of a chained workflow — load checkpoint, run one turn, continue or finalize."""
+    print(f"=== Crowd Agent Chained Build (Continuation: {checkpoint_branch}) ===")
+    print(f"Time: {datetime.now(timezone.utc).isoformat()}")
+
+    config = load_config()
+    print(f"LLM Provider: {get_llm_provider()}, Model: {get_model_name(config)}")
+    system_prompt = load_system_prompt()
+
+    gh = get_github()
+    repo = get_repo(gh)
+
+    issue = None
+    try:
+        # Step 1: Load checkpoint
+        checkpoint = load_checkpoint()
+        if checkpoint is None:
+            raise RuntimeError(
+                f"No checkpoint found on branch {checkpoint_branch}. "
+                f"Expected {CHECKPOINT_FILE} at repo root."
+            )
+
+        # Get issue for error reporting
+        issue = repo.get_issue(checkpoint["issue_number"])
+
+        # Step 2: Validate checkpoint
+        if checkpoint.get("status") != "in_progress":
+            raise RuntimeError(
+                f"Checkpoint status is '{checkpoint.get('status')}', expected 'in_progress'"
+            )
+        if checkpoint.get("chain_depth", 0) >= checkpoint.get("max_chain_depth", 15):
+            raise RuntimeError(
+                f"Max chain depth reached ({checkpoint.get('chain_depth')}/"
+                f"{checkpoint.get('max_chain_depth')})"
+            )
+        if checkpoint.get("turn", 0) >= checkpoint.get("max_turns", 10):
+            raise RuntimeError(
+                f"Max turns reached ({checkpoint.get('turn')}/{checkpoint.get('max_turns')})"
+            )
+
+        # Step 3: Increment chain depth
+        checkpoint["chain_depth"] = checkpoint.get("chain_depth", 0) + 1
+
+        # Step 4: Configure git for commits
+        run_git("config", "user.name", "Crowd Agent[bot]")
+        run_git("config", "user.email", "crowd-agent-bot@users.noreply.github.com")
+
+        # Set up authenticated remote for push
+        token = os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN")
+        if token:
+            owner = os.environ.get("REPO_OWNER", "trevorstenson")
+            repo_name = os.environ.get("REPO_NAME", "crowd-agent")
+            remote_url = f"https://x-access-token:{token}@github.com/{owner}/{repo_name}.git"
+            run_git("remote", "set-url", "origin", remote_url)
+
+        # Step 5: Run one turn
+        reset_file_changes()
+        checkpoint = run_single_turn_ollama(checkpoint, config, system_prompt)
+
+        # Step 6: Commit file edits + checkpoint
+        turn_files = list(get_file_changes().keys())
+        commit_turn_changes(checkpoint, turn_files)
+
+        # Step 7: Finalize or continue
+        if should_finalize(checkpoint):
+            _finalize_chain(repo, issue, checkpoint, config)
+        else:
+            if checkpoint.get("status") == "error":
+                # Error occurred — report and stop
+                error_msg = checkpoint.get("error", "Unknown error during agent turn")
+                report_failure(repo, issue, error_msg)
+                sys.exit(1)
+
+            trigger_next_workflow(checkpoint)
+            print("Continuation run complete — next workflow triggered.")
+
+    except Exception as e:
+        logger.error(f"Chained build (continuation) failed: {e}", exc_info=True)
+        print(f"Build failed: {e}")
+
+        if issue:
+            try:
+                report_failure(repo, issue, str(e))
+            except Exception as report_err:
+                logger.error(f"Failed to report failure: {report_err}")
+
+        sys.exit(1)
+
+
+def _finalize_chain(repo, issue, checkpoint: dict, config: dict):
+    """Complete the chain — remove checkpoint, create PR, report, tweet, vote."""
+    print("=== Finalizing chained build ===")
+
+    files_modified = checkpoint.get("files_modified", [])
+    if not files_modified:
+        raise RuntimeError("Agent completed chain but made no file changes.")
+
+    # Remove checkpoint file from the branch
+    remove_checkpoint()
+    try:
+        run_git("add", "-A")
+        run_git("commit", "-m", "remove checkpoint file")
+        run_git("push")
+    except RuntimeError:
+        pass  # No changes to commit (checkpoint already removed)
+
+    # Build changes dict for changelog (read current file contents)
+    changes = {}
+    for fpath in files_modified:
+        full_path = os.path.join(REPO_DIR, fpath)
+        if os.path.isfile(full_path):
+            with open(full_path) as f:
+                changes[fpath] = f.read()
+
+    # Generate changelog
+    changelog_text = ""
+    try:
+        changelog_text = generate_changelog_entry(config, issue, changes, success=True)
+    except Exception as e:
+        logger.warning(f"Could not generate changelog: {e}")
+
+    # Create PR from existing branch
+    pr_url = create_pr_from_branch(repo, issue, checkpoint, changelog_text=changelog_text)
+
+    # Report result
+    report_result(issue, pr_url)
+
+    # Tweet about success
+    try:
+        dry_run = os.environ.get("TWITTER_DRY_RUN", "").lower() == "true"
+        tweet_build_success(issue.title, pr_url, dry_run=dry_run)
+    except Exception as e:
+        logger.warning(f"Could not tweet build success: {e}")
+
+    # Vote on next issue
+    try:
+        vote_on_next_issue(repo, config, issue.number)
+    except Exception as e:
+        logger.warning(f"Could not vote on next issue: {e}")
+
+    print("Chained build completed successfully!")
 
 
 if __name__ == "__main__":
