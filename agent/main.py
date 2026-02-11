@@ -956,10 +956,13 @@ def run_single_turn_ollama(checkpoint: dict, config: dict, system_prompt: str) -
             if fpath not in checkpoint.get("files_modified", []):
                 checkpoint.setdefault("files_modified", []).append(fpath)
     else:
-        # No tool call and no DONE: — model is done
-        print(f"Agent summary (no tool call): {content[:200]}...")
-        checkpoint["status"] = "done"
-        checkpoint["final_summary"] = content
+        # No tool call and no DONE: — wasted turn (model talked instead of acting).
+        # Keep status as in_progress so the chain continues with a fresh prompt.
+        print(f"  No tool call parsed (wasted turn): {content[:200]}...")
+        append_action_log(
+            checkpoint, "(no_tool_call)", {},
+            f"Model responded with text instead of a tool call: {content[:300]}",
+        )
 
     return checkpoint
 
