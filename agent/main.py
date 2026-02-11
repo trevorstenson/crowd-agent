@@ -16,6 +16,7 @@ how the agent works, what tools it has, and how it makes decisions.
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -91,6 +92,66 @@ def save_memory(memory: dict):
     with open(memory_path, "w") as f:
         json.dump(memory, f, indent=2)
         f.write("\n")
+
+# --- LLM Provider Abstraction ---
+
+def get_llm_provider() -> str:
+    return os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+def get_model_name(config: dict) -> str:
+    if get_llm_provider() == "ollama":
+        return os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+    return config["model"]
+
+def get_agent_loop_timeout(config: dict) -> int:
+    env_timeout = os.environ.get("AGENT_LOOP_TIMEOUT")
+    if env_timeout:
+        return int(env_timeout)
+    default = config.get("error_handling", {}).get("agent_loop_timeout_seconds", 300)
+    if get_llm_provider() == "ollama":
+        return max(default, 2400)  # 40 min minimum for CPU inference
+    return default
+
+def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
+    """Simple LLM text completion. Works with both Anthropic and Ollama."""
+    model = get_model_name(config)
+    if get_llm_provider() == "ollama":
+        import openai
+        client = openai.OpenAI(
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",  # required by client but unused by Ollama
+            timeout=1800.0,  # 30 min — CPU inference is slow
+        )
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content.strip()
+    else:
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+def _tools_to_openai_format(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic tool definitions to OpenAI function calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            }
+        }
+        for t in tools
+    ]
 
 # --- Error Classification ---
 
@@ -344,8 +405,6 @@ def report_failure(repo, issue, error: str):
 
 def generate_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None) -> str:
     """Ask the agent to write a changelog entry. Returns the formatted markdown entry."""
-    client = anthropic.Anthropic()
-
     if success:
         prompt = (
             "You just completed a build for the Crowd Agent project. Write a short changelog entry.\n\n"
@@ -370,14 +429,7 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
             "Return ONLY the entry text, no heading or date."
         )
 
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=300,
-        temperature=0.7,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    entry_text = response.content[0].text.strip()
+    entry_text = llm_complete(config, prompt, max_tokens=300, temperature=0.7)
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     status_emoji = "+" if success else "x"
 
@@ -439,16 +491,8 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         '{"issue_number": <number>, "reason": "<1-2 sentence explanation>"}'
     )
 
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=256,
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
     try:
-        text = response.content[0].text.strip()
+        text = llm_complete(config, prompt, max_tokens=256, temperature=0)
         # Strip markdown fencing if the model wraps the JSON
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -471,7 +515,6 @@ def vote_on_next_issue(repo, config, just_built_number: int):
         print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
     except Exception as e:
         print(f"Warning: Could not vote on next issue: {e}")
-        print(f"Raw response: {response.content[0].text[:500] if response.content else '(empty)'}")
 
 
 def run_git(*args):
@@ -516,22 +559,20 @@ def get_repo_file_list() -> list[str]:
 
 @retry_on_transient_api_error
 def create_plan(issue, repo_files: list[str], config: dict) -> str:
-    """Ask Claude to create a plan for implementing the issue.
-    
+    """Ask the LLM to create a plan for implementing the issue.
+
     Returns the plan as a string.
     Retries on transient API errors.
     """
-    client = anthropic.Anthropic()
-    
     prompt = (
         f"## Task\n\nCreate a detailed plan for implementing this GitHub issue:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n"
         f"## Repository Structure\n\n"
     )
-    
+
     for path in repo_files:
         prompt += f"- `{path}`\n"
-    
+
     prompt += (
         "\n\n## Planning Instructions\n\n"
         "Create a clear, step-by-step plan that includes:\n"
@@ -541,30 +582,26 @@ def create_plan(issue, repo_files: list[str], config: dict) -> str:
         "4. **Potential challenges** — Note any tricky parts or edge cases\n\n"
         "Be specific and concrete. This plan will guide your implementation."
     )
-    
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=2000,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    
-    plan = response.content[0].text.strip()
+
+    plan = llm_complete(config, prompt, max_tokens=2000, temperature=0.3)
     print(f"Plan created:\n{plan[:500]}...\n")
     return plan
 
 def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
-    """Run the agent loop: call Claude with tools until done. Returns file changes.
-    
-    The agent is given the plan upfront to guide its implementation.
-    Includes timeout protection and graceful error handling for tool execution.
+    """Run the agent loop with tools until done. Returns file changes.
+
+    Dispatches to the appropriate provider (Anthropic or Ollama).
     """
+    if get_llm_provider() == "ollama":
+        return _run_agent_ollama(issue, repo_files, config, system_prompt, plan)
+    return _run_agent_anthropic(issue, repo_files, config, system_prompt, plan)
+
+def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop using the Anthropic API."""
     reset_file_changes()
     client = anthropic.Anthropic()
-    error_config = config.get("error_handling", {})
-    timeout_seconds = error_config.get("agent_loop_timeout_seconds", 300)
+    timeout_seconds = get_agent_loop_timeout(config)
 
-    # Build the prompt with the plan included
     prompt_text = build_prompt(issue, repo_files)
     prompt_text += (
         f"\n\n## Implementation Plan\n\n"
@@ -577,14 +614,12 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
 
     with TimeoutHandler(timeout_seconds) as timeout_handler:
         for turn in range(config["max_turns"]):
-            # Check timeout before each turn
             timeout_handler.check()
-            
             print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
 
             try:
                 response = client.messages.create(
-                    model=config["model"],
+                    model=get_model_name(config),
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
                     system=system_prompt,
@@ -603,19 +638,15 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
                 logger.error(f"API error on turn {turn + 1}: {e}")
                 raise
 
-            # Collect assistant content
             assistant_content = response.content
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # Check if done
             if response.stop_reason == "end_turn":
-                # Extract final text
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         print(f"Agent summary: {block.text[:200]}...")
                 break
 
-            # Process tool calls
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
@@ -635,6 +666,214 @@ def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, pl
 
     return get_file_changes()
 
+def _parse_tool_call(content: str):
+    """Parse a tool call from model text output. Returns (name, args) or None.
+
+    Handles common issues with small models:
+    - Literal newlines inside JSON string values (should be \\n)
+    - JSON embedded in surrounding text
+    - Markdown code fences around JSON
+    """
+    content = content.strip()
+
+    # Strip markdown code fences if present
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+        content = content.rsplit("```", 1)[0].strip()
+
+    # Try parsing the whole content as JSON directly
+    try:
+        obj = json.loads(content)
+        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
+            return obj["tool"], obj["args"]
+    except json.JSONDecodeError:
+        pass
+
+    # Try with escaped newlines — models often output literal newlines inside
+    # JSON string values instead of proper \n escapes. Since we instruct the
+    # model to output a single-line JSON object, any literal newlines are
+    # inside string values and should be escaped.
+    try:
+        fixed = content.replace('\r\n', '\\n').replace('\n', '\\n')
+        obj = json.loads(fixed)
+        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
+            return obj["tool"], obj["args"]
+    except json.JSONDecodeError:
+        pass
+
+    # Brace-depth extraction — find outermost {...} containing "tool"
+    depth = 0
+    start = -1
+    for i, c in enumerate(content):
+        if c == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = content[start:i + 1]
+                if '"tool"' in candidate:
+                    try:
+                        obj = json.loads(candidate)
+                        if "tool" in obj and "args" in obj:
+                            return obj["tool"], obj["args"]
+                    except json.JSONDecodeError:
+                        pass
+                    # Try with escaped newlines on the extracted candidate
+                    try:
+                        fixed = candidate.replace('\r\n', '\\n').replace('\n', '\\n')
+                        obj = json.loads(fixed)
+                        if "tool" in obj and "args" in obj:
+                            return obj["tool"], obj["args"]
+                    except json.JSONDecodeError:
+                        pass
+                start = -1
+
+    # Regex fallback — extract tool call from malformed JSON (e.g. unescaped
+    # quotes inside write_file content that break json.loads even after
+    # newline escaping)
+    tool_match = re.search(r'"tool"\s*:\s*"(\w+)"', content)
+    if tool_match:
+        tool_name = tool_match.group(1)
+        if tool_name == "write_file":
+            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            content_start = re.search(r'"content"\s*:\s*"', content)
+            if path_match and content_start:
+                cs = content_start.end()
+                # Find the closing "}} at the end of the response
+                end_match = re.search(r'"\s*\}\s*\}\s*$', content)
+                if end_match:
+                    file_content = content[cs:end_match.start()]
+                    # Unescape any \n the model did properly escape
+                    file_content = file_content.replace('\\n', '\n')
+                    file_content = file_content.replace('\\"', '"')
+                    return tool_name, {"path": path_match.group(1), "content": file_content}
+        elif tool_name == "read_file":
+            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            if path_match:
+                return tool_name, {"path": path_match.group(1)}
+        elif tool_name == "list_files":
+            dir_match = re.search(r'"directory"\s*:\s*"([^"]*)"', content)
+            return tool_name, {"directory": dir_match.group(1) if dir_match else "."}
+        elif tool_name == "search_files":
+            pattern_match = re.search(r'"pattern"\s*:\s*"([^"]+)"', content)
+            if pattern_match:
+                return tool_name, {"pattern": pattern_match.group(1)}
+
+    return None
+
+def _build_tool_prompt() -> str:
+    """Build a prompt section describing available tools and the JSON calling convention."""
+    tool_lines = []
+    for t in TOOL_DEFINITIONS:
+        params = t["input_schema"].get("properties", {})
+        required = t["input_schema"].get("required", [])
+        param_desc = ", ".join(
+            f'"{k}" ({v.get("type", "string")}, {"required" if k in required else "optional"}): {v.get("description", "")}'
+            for k, v in params.items()
+        )
+        tool_lines.append(f'- **{t["name"]}**: {t["description"]}\n  Parameters: {param_desc}')
+
+    return (
+        "## Available Tools\n\n"
+        + "\n\n".join(tool_lines)
+        + '\n\n## How to Call Tools\n\n'
+        'To call a tool, respond with ONLY a JSON object in this exact format:\n'
+        '{"tool": "<tool_name>", "args": {<arguments>}}\n\n'
+        'Examples:\n'
+        '{"tool": "read_file", "args": {"path": "agent/prompt.md"}}\n'
+        '{"tool": "write_file", "args": {"path": "README.md", "content": "# Hello"}}\n'
+        '{"tool": "list_files", "args": {"directory": "."}}\n\n'
+        'RULES:\n'
+        '- Call ONE tool per response\n'
+        '- Respond with ONLY the JSON object — no explanation, no markdown fences\n'
+        '- First read_file to see current content, then write_file with the COMPLETE updated content\n'
+        '- IMPORTANT: In write_file content, use \\n for newlines — do NOT use literal line breaks inside the JSON string\n'
+        '- When you are done making ALL changes, respond with a plain text summary (no JSON)\n'
+    )
+
+def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop using Ollama with structured JSON tool calls parsed from text."""
+    import openai
+
+    reset_file_changes()
+    client = openai.OpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",
+        timeout=1800.0,  # 30 min — CPU inference is slow for large outputs
+    )
+    model = get_model_name(config)
+    timeout_seconds = get_agent_loop_timeout(config)
+
+    prompt_text = build_prompt(issue, repo_files)
+    prompt_text += (
+        f"\n\n## Implementation Plan\n\n"
+        f"Follow this plan to guide your implementation:\n\n{plan}"
+    )
+
+    tool_prompt = _build_tool_prompt()
+
+    messages = [
+        {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
+        {"role": "user", "content": prompt_text},
+    ]
+
+    loop_start = time.time()
+    with TimeoutHandler(timeout_seconds) as timeout_handler:
+        for turn in range(config["max_turns"]):
+            timeout_handler.check()
+            turn_start = time.time()
+            elapsed_total = turn_start - loop_start
+            print(f"--- Agent turn {turn + 1}/{config['max_turns']} (elapsed: {elapsed_total:.1f}s) ---")
+
+            try:
+                llm_start = time.time()
+                response = client.chat.completions.create(
+                    model=model,
+                    max_tokens=config["max_tokens"],
+                    temperature=config["temperature"],
+                    messages=messages,
+                )
+                llm_elapsed = time.time() - llm_start
+                print(f"  LLM response: {llm_elapsed:.1f}s")
+            except Exception as e:
+                logger.warning(f"API error on turn {turn + 1}: {e}")
+                time.sleep(2)
+                continue
+
+            content = (response.choices[0].message.content or "").strip()
+            messages.append({"role": "assistant", "content": content})
+
+            # Try to parse a tool call from the text
+            tool_call = _parse_tool_call(content)
+
+            if tool_call:
+                name, args = tool_call
+                print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+                tool_start = time.time()
+                result = execute_tool_safely(name, args)
+                tool_elapsed = time.time() - tool_start
+                print(f"  Tool result ({tool_elapsed:.1f}s): {result[:100]}...")
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool result for {name}:\n{result}",
+                })
+            else:
+                # No tool call — model is done
+                print(f"Agent summary: {content[:200]}...")
+                break
+
+            turn_elapsed = time.time() - turn_start
+            print(f"  Turn total: {turn_elapsed:.1f}s")
+        else:
+            logger.warning("Agent reached max turns without finishing.")
+
+    total_elapsed = time.time() - loop_start
+    print(f"Agent loop finished in {total_elapsed:.1f}s ({turn + 1} turns)")
+
+    return get_file_changes()
+
 
 # --- Main ---
 
@@ -643,6 +882,7 @@ def main():
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
 
     config = load_config()
+    print(f"LLM Provider: {get_llm_provider()}, Model: {get_model_name(config)}")
     system_prompt = load_system_prompt()
     memory = load_memory()
 
