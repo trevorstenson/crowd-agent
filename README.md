@@ -6,15 +6,14 @@ Every night at midnight UTC, Crowd Agent reads the top-voted GitHub Issue, imple
 
 The agent modifies itself.
 
+## How It Works
+
+1. **Vote** — Browse [open issues](https://github.com/trevorstenson/crowd-agent/issues?q=is%3Aissue+is%3A
+
 ## Project Structure
 
+```
 crowd-agent/
-├── .git/
-├── .github/
-│   └── workflows/
-├── CHANGELOG.md
-├── CONSTITUTION.md
-├── README.md
 ├── agent/
 │   ├── __pycache__/
 │   ├── checkpoint.py
@@ -23,10 +22,14 @@ crowd-agent/
 │   ├── memory.json
 │   ├── prompt.md
 │   ├── tools.py
-│   └── twitter.py
+│   ├── twitter.py
+│   └── ... 
 ├── dashboard/
+│   └── ...
+├── .github/
+│   └── workflows/
+├── CHANGELOG.md
+├── CONSTITUTION.md
+├── README.md
 └── requirements.txt
-
-## How It Works
-
-1. **Vote** — Browse [open issues](https://github.com/trevorstenson/crowd-agent/issues?q=is%3Aissue+is%3A
+```
