@@ -149,12 +149,9 @@ def append_action_log(
 def trigger_next_workflow(checkpoint: dict):
     """Dispatch the next workflow run to continue the chain.
 
-    Uses the GitHub REST API directly to create a workflow_dispatch event.
-    The dispatch targets the `local-agent` ref where the workflow file lives.
+    Uses `gh workflow run` with the checkpoint branch and model as inputs.
+    Targets the `local-agent` ref where the workflow file lives.
     """
-    import urllib.request
-    import urllib.error
-
     branch = checkpoint["branch"]
     model = checkpoint.get("model", "qwen3:8b")
 
@@ -162,30 +159,25 @@ def trigger_next_workflow(checkpoint: dict):
     owner = os.environ.get("REPO_OWNER", "trevorstenson")
     repo_name = os.environ.get("REPO_NAME", "crowd-agent")
 
-    url = (
-        f"https://api.github.com/repos/{owner}/{repo_name}"
-        f"/actions/workflows/nightly-build-local.yml/dispatches"
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+
+    result = subprocess.run(
+        [
+            "gh", "workflow", "run", "nightly-build-local.yml",
+            "-R", f"{owner}/{repo_name}",
+            "--ref", "local-agent",
+            "-f", f"checkpoint_branch={branch}",
+            "-f", f"model={model}",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
     )
-    payload = json.dumps({
-        "ref": "local-agent",
-        "inputs": {
-            "checkpoint_branch": branch,
-            "model": model,
-        },
-    }).encode()
 
-    req = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        urllib.request.urlopen(req)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
+    if result.returncode != 0:
         raise RuntimeError(
-            f"Failed to trigger next workflow: HTTP {e.code}: {body}"
+            f"Failed to trigger next workflow: {result.stderr}"
         )
 
     print(f"Triggered next workflow run for branch {branch}")
