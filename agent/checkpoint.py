@@ -107,9 +107,11 @@ def build_continuation_prompt(checkpoint: dict, system_prompt: str) -> list[dict
         f"{files_text}\n\n"
         f"## Instructions\n"
         f"Continue implementing the plan. You are on turn {turn + 1}/{max_turns}.\n"
-        f"Use tools to make your next change. When ALL changes are complete, respond with\n"
-        f'a plain text summary starting with "DONE:".\n'
-        f"If you need to read a file you previously edited, use read_file — your edits are saved."
+        f"Make your next change using ONE tool call. Respond with ONLY a JSON object.\n"
+        f"- To modify an existing file, prefer edit_file (find and replace) over write_file.\n"
+        f"  edit_file only needs the old and new text, not the entire file.\n"
+        f"- When ALL changes are complete, respond with a plain text summary starting with \"DONE:\".\n"
+        f"- If you need to read a file you previously edited, use read_file — your edits are saved."
     )
 
     messages = [
@@ -124,15 +126,18 @@ def append_action_log(
 ) -> None:
     """Add a log entry to the checkpoint's action_log.
 
-    The result_summary is truncated to 500 chars but preserves enough
-    for the next brain to make decisions.
+    The result_summary is truncated but preserves enough for the next
+    brain to make decisions. read_file gets a higher limit (2000 chars)
+    since the model needs file contents to plan edits.
     """
     args_summary = ", ".join(
         f"{k}={repr(v)[:60]}" for k, v in tool_args.items()
     )
     action_str = f"{tool_name}({args_summary})"
 
-    result_summary = result[:500] if len(result) > 500 else result
+    # read_file results need more context so the model can use edit_file
+    limit = 2000 if tool_name == "read_file" else 500
+    result_summary = result[:limit] if len(result) > limit else result
 
     if "action_log" not in checkpoint:
         checkpoint["action_log"] = []

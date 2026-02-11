@@ -694,8 +694,13 @@ def _parse_tool_call(content: str):
     # Try parsing the whole content as JSON directly
     try:
         obj = json.loads(content)
-        if isinstance(obj, dict) and "tool" in obj and "args" in obj:
-            return obj["tool"], obj["args"]
+        if isinstance(obj, dict) and "tool" in obj:
+            args = obj.get("args", obj)
+            # Normalize common key mistakes: "file" → "path"
+            if "file" in args and "path" not in args:
+                args["path"] = args.pop("file")
+            if "args" in obj:
+                return obj["tool"], args
     except json.JSONDecodeError:
         pass
 
@@ -747,7 +752,7 @@ def _parse_tool_call(content: str):
     if tool_match:
         tool_name = tool_match.group(1)
         if tool_name == "write_file":
-            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            path_match = re.search(r'"(?:path|file)"\s*:\s*"([^"]+)"', content)
             content_start = re.search(r'"content"\s*:\s*"', content)
             if path_match and content_start:
                 cs = content_start.end()
@@ -760,7 +765,7 @@ def _parse_tool_call(content: str):
                     file_content = file_content.replace('\\"', '"')
                     return tool_name, {"path": path_match.group(1), "content": file_content}
         elif tool_name == "read_file":
-            path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content)
+            path_match = re.search(r'"(?:path|file)"\s*:\s*"([^"]+)"', content)
             if path_match:
                 return tool_name, {"path": path_match.group(1)}
         elif tool_name == "list_files":
@@ -885,13 +890,17 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
     return get_file_changes()
 
 
-# --- Workflow Chaining (single-turn per workflow run) ---
+# --- Workflow Chaining (multi-turn per workflow run) ---
 
-def run_single_turn_ollama(checkpoint: dict, config: dict, system_prompt: str) -> dict:
-    """Execute exactly ONE LLM turn for workflow chaining.
+TURNS_PER_WORKFLOW = 2  # How many LLM turns to run per workflow invocation
 
-    Builds a minimal prompt from the checkpoint, makes one LLM call,
-    executes one tool (if any), and updates the checkpoint.
+
+def run_chained_turns(checkpoint: dict, config: dict, system_prompt: str) -> dict:
+    """Execute up to TURNS_PER_WORKFLOW LLM turns for workflow chaining.
+
+    Each turn rebuilds the prompt fresh from the checkpoint, so context
+    stays flat regardless of how many turns have passed. Stops early if
+    the agent says DONE or an error occurs.
 
     Returns the updated checkpoint dict.
     """
@@ -904,65 +913,72 @@ def run_single_turn_ollama(checkpoint: dict, config: dict, system_prompt: str) -
     )
     model = checkpoint.get("model", get_model_name(config))
 
-    messages = build_continuation_prompt(checkpoint, system_prompt)
+    for step in range(TURNS_PER_WORKFLOW):
+        # Stop if we've hit turn/chain limits
+        if should_finalize(checkpoint):
+            break
 
-    turn = checkpoint.get("turn", 0) + 1
-    checkpoint["turn"] = turn
-    print(f"--- Chained turn {turn}/{checkpoint.get('max_turns', 10)} (chain_depth={checkpoint.get('chain_depth', 0)}) ---")
+        # Rebuild prompt fresh each turn from checkpoint
+        messages = build_continuation_prompt(checkpoint, system_prompt)
 
-    llm_start = time.time()
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            max_tokens=config["max_tokens"],
-            temperature=config["temperature"],
-            messages=messages,
-        )
-    except Exception as e:
-        logger.error(f"LLM call failed on turn {turn}: {e}")
-        checkpoint["status"] = "error"
-        checkpoint["error"] = str(e)
-        return checkpoint
+        turn = checkpoint.get("turn", 0) + 1
+        checkpoint["turn"] = turn
+        print(f"--- Chained turn {turn}/{checkpoint.get('max_turns', 10)} "
+              f"(step {step + 1}/{TURNS_PER_WORKFLOW}, chain_depth={checkpoint.get('chain_depth', 0)}) ---")
 
-    llm_elapsed = time.time() - llm_start
-    print(f"  LLM response: {llm_elapsed:.1f}s")
+        llm_start = time.time()
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=config["max_tokens"],
+                temperature=config["temperature"],
+                messages=messages,
+            )
+        except Exception as e:
+            logger.error(f"LLM call failed on turn {turn}: {e}")
+            checkpoint["status"] = "error"
+            checkpoint["error"] = str(e)
+            return checkpoint
 
-    content = (response.choices[0].message.content or "").strip()
+        llm_elapsed = time.time() - llm_start
+        print(f"  LLM response: {llm_elapsed:.1f}s")
 
-    # Check if agent says it's done
-    if content.upper().startswith("DONE:") or content.upper().startswith("DONE "):
-        print(f"Agent finished: {content[:200]}...")
-        checkpoint["status"] = "done"
-        checkpoint["final_summary"] = content
-        return checkpoint
+        content = (response.choices[0].message.content or "").strip()
 
-    # Try to parse a tool call
-    tool_call = _parse_tool_call(content)
+        # Check if agent says it's done
+        if content.upper().startswith("DONE:") or content.upper().startswith("DONE "):
+            print(f"Agent finished: {content[:200]}...")
+            checkpoint["status"] = "done"
+            checkpoint["final_summary"] = content
+            return checkpoint
 
-    if tool_call:
-        name, args = tool_call
-        print(f"  Tool call: {name}({json.dumps(args)[:100]})")
-        tool_start = time.time()
-        result = execute_tool_safely(name, args)
-        tool_elapsed = time.time() - tool_start
-        print(f"  Tool result ({tool_elapsed:.1f}s): {result[:100]}...")
+        # Try to parse a tool call
+        tool_call = _parse_tool_call(content)
 
-        # Update checkpoint
-        append_action_log(checkpoint, name, args, result)
+        if tool_call:
+            name, args = tool_call
+            print(f"  Tool call: {name}({json.dumps(args)[:100]})")
+            tool_start = time.time()
+            result = execute_tool_safely(name, args)
+            tool_elapsed = time.time() - tool_start
+            print(f"  Tool result ({tool_elapsed:.1f}s): {result[:100]}...")
 
-        # Track modified files across all turns
-        turn_changes = get_file_changes()
-        for fpath in turn_changes:
-            if fpath not in checkpoint.get("files_modified", []):
-                checkpoint.setdefault("files_modified", []).append(fpath)
-    else:
-        # No tool call and no DONE: — wasted turn (model talked instead of acting).
-        # Keep status as in_progress so the chain continues with a fresh prompt.
-        print(f"  No tool call parsed (wasted turn): {content[:200]}...")
-        append_action_log(
-            checkpoint, "(no_tool_call)", {},
-            f"Model responded with text instead of a tool call: {content[:300]}",
-        )
+            # Update checkpoint
+            append_action_log(checkpoint, name, args, result)
+
+            # Track modified files across all turns
+            turn_changes = get_file_changes()
+            for fpath in turn_changes:
+                if fpath not in checkpoint.get("files_modified", []):
+                    checkpoint.setdefault("files_modified", []).append(fpath)
+        else:
+            # No tool call and no DONE: — wasted turn (model talked instead of acting).
+            # Keep status as in_progress so the chain continues with a fresh prompt.
+            print(f"  No tool call parsed (wasted turn): {content[:200]}...")
+            append_action_log(
+                checkpoint, "(no_tool_call)", {},
+                f"Model responded with text instead of a tool call: {content[:300]}",
+            )
 
     return checkpoint
 
@@ -1168,7 +1184,7 @@ def main_fresh():
 
 
 def main_fresh_chained():
-    """First run of a chained workflow — find issue, plan, run one turn, trigger next."""
+    """First run of a chained workflow — find issue, plan, run turns, trigger next."""
     print("=== Crowd Agent Chained Build (Fresh) ===")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
 
@@ -1234,9 +1250,9 @@ def main_fresh_chained():
             "repo_files_snapshot": repo_files,
         }
 
-        # Step 7: Run one turn (LLM call #2)
+        # Step 7: Run turns (LLM calls)
         reset_file_changes()
-        checkpoint = run_single_turn_ollama(checkpoint, config, system_prompt)
+        checkpoint = run_chained_turns(checkpoint, config, system_prompt)
 
         # Step 8: Commit file edits + checkpoint to branch
         turn_files = list(get_file_changes().keys())
@@ -1263,7 +1279,7 @@ def main_fresh_chained():
 
 
 def main_continuation(checkpoint_branch: str):
-    """Subsequent run of a chained workflow — load checkpoint, run one turn, continue or finalize."""
+    """Subsequent run of a chained workflow — load checkpoint, run turns, continue or finalize."""
     print(f"=== Crowd Agent Chained Build (Continuation: {checkpoint_branch}) ===")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
 
@@ -1317,9 +1333,9 @@ def main_continuation(checkpoint_branch: str):
             remote_url = f"https://x-access-token:{token}@github.com/{owner}/{repo_name}.git"
             run_git("remote", "set-url", "origin", remote_url)
 
-        # Step 5: Run one turn
+        # Step 5: Run turns
         reset_file_changes()
-        checkpoint = run_single_turn_ollama(checkpoint, config, system_prompt)
+        checkpoint = run_chained_turns(checkpoint, config, system_prompt)
 
         # Step 6: Commit file edits + checkpoint
         turn_files = list(get_file_changes().keys())
