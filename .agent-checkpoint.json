@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "issue_number": 90,
+  "issue_title": "Add a project file tree diagram to README.md",
+  "issue_body": "Use the `list_files` tool to explore the repository structure, then add a `## Project Structure` section to `README.md` showing a file tree diagram.\n\nExample format:\n```\ncrowd-agent/\n\u251c\u2500\u2500 agent/\n\u2502   \u251c\u2500\u2500 main.py\n\u2502   \u251c\u2500\u2500 tools.py\n\u2502   \u2514\u2500\u2500 ...\n\u251c\u2500\u2500 dashboard/\n\u2502   \u2514\u2500\u2500 ...\n\u251c\u2500\u2500 README.md\n\u2514\u2500\u2500 ...\n```\n\nInclude all top-level files and directories, and expand the contents of the `agent/` and `.github/` directories. Keep other directories collapsed with `...`.\n\nAdd this section after the first heading/intro paragraph of the README.",
+  "plan": "",
+  "branch": "agent/issue-90",
+  "turn": 1,
+  "max_turns": 10,
+  "chain_depth": 1,
+  "max_chain_depth": 15,
+  "status": "in_progress",
+  "files_modified": [],
+  "action_log": [
+    {
+      "turn": 1,
+      "action": "list_files(directory='.')",
+      "result_summary": ".git/\n.github/\nCHANGELOG.md\nCONSTITUTION.md\nREADME.md\nagent/\ndashboard/\nrequirements.txt"
+    }
+  ],
+  "started_at": "2026-02-11T19:34:17.111073+00:00",
+  "updated_at": "2026-02-11T19:42:22.761878+00:00",
+  "model": "qwen3:8b",
+  "repo_files_snapshot": [
+    ".github/workflows/auto-merge.yml",
+    ".github/workflows/deploy.yml",
+    ".github/workflows/label-voting.yml",
+    ".github/workflows/nightly-build-local.yml",
+    ".github/workflows/nightly-build.yml",
+    "CHANGELOG.md",
+    "CONSTITUTION.md",
+    "README.md",
+    "agent/checkpoint.py",
+    "agent/config.json",
+    "agent/main.py",
+    "agent/memory.json",
+    "agent/prompt.md",
+    "agent/tools.py",
+    "agent/twitter.py",
+    "dashboard/app.js",
+    "dashboard/favicon.ico",
+    "dashboard/index.html",
+    "dashboard/style.css",
+    "requirements.txt"
+  ]
+}
