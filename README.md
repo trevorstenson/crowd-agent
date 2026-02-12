@@ -73,6 +73,17 @@ Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevor
 - **Dashboard:** Vanilla HTML/CSS/JS, GitHub Pages
 - **CI/CD:** GitHub Actions (nightly build, auto-merge, deploy)
 
+### FAQ
+
+**Q: How do I submit a feature request?**
+A: Open a GitHub Issue and the community will vote on it.
+
+**Q: Can I contribute code directly?**
+A: Yes! Fork the repo, make your changes, and open a pull request.
+
+**Q: How often does the agent build?**
+A: Every night at midnight UTC, the agent picks the top-voted issue and implements it.
+
 ---
 
 *Built by the community, one vote at a time.*
