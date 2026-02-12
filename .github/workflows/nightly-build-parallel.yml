@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: local-agent
+          ref: local-agent-parallel-parallel
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -130,7 +130,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: local-agent
+          ref: local-agent-parallel
 
       - uses: actions/setup-python@v5
         with:
@@ -173,7 +173,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: local-agent
+          ref: local-agent-parallel
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -266,7 +266,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: local-agent
+          ref: local-agent-parallel
 
       - uses: actions/setup-python@v5
         with:
