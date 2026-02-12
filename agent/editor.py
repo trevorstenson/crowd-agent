@@ -101,7 +101,11 @@ def build_mega_prompt(issue_number: int, issue_title: str, issue_body: str,
         f"## Repository Structure\n\n{file_list}\n\n"
         f"## Instructions\n\n"
         f"All context has been provided above. Focus on making the edits:\n"
-        f"- Use edit_file for targeted changes (preferred) or write_file for new files\n"
+        f"- Use write_file to create NEW files or fully rewrite existing ones: "
+        f'{{"tool": "write_file", "args": {{"path": "file.py", "content": "full content"}}}}\n'
+        f"- Use edit_file for targeted find-and-replace edits on EXISTING files: "
+        f'{{"tool": "edit_file", "args": {{"path": "file.py", "old_string": "text to find", "new_string": "replacement text"}}}}\n'
+        f"- IMPORTANT: edit_file requires old_string and new_string, NOT content\n"
         f"- Do NOT explore — all needed file contents are above\n"
         f"- When ALL changes are complete, respond with a plain text summary (no JSON)\n"
     )
