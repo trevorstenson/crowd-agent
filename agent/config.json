@@ -19,5 +19,11 @@
     "max_steps_per_task": 6,
     "max_edit_turns": 4,
     "planner_max_tokens": 2000
+  },
+  "dynamic": {
+    "max_rounds": 10,
+    "max_llm_calls": 8,
+    "max_consecutive_errors": 2,
+    "max_tool_calls_per_edit": 4
   }
 }
