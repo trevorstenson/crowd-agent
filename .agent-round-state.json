@@ -6,12 +6,43 @@
   "branch": "agent/issue-90",
   "current_phase": "plan",
   "round_number": 1,
-  "total_llm_calls": 0,
-  "plan_steps": [],
-  "current_step": 0,
-  "round_logs": [],
+  "total_llm_calls": 1,
+  "plan_steps": [
+    {
+      "id": 1,
+      "type": "read",
+      "description": "Read relevant files",
+      "status": "pending",
+      "result_summary": ""
+    },
+    {
+      "id": 2,
+      "type": "edit",
+      "description": "Implement: Add a project file tree diagram to README.md",
+      "status": "pending",
+      "result_summary": ""
+    },
+    {
+      "id": 3,
+      "type": "verify",
+      "description": "Verify changes",
+      "status": "pending",
+      "result_summary": ""
+    }
+  ],
+  "current_step": 1,
+  "round_logs": [
+    {
+      "round": 1,
+      "phase": "plan",
+      "summary": "Planner failed: Could not parse planner output as JSON: ..., using fallback plan"
+    }
+  ],
   "files_modified": [],
-  "pending_decision": null,
+  "pending_decision": {
+    "next_phase": "edit",
+    "reasoning": "Planner failed (Could not parse planner output as JSON: ...), using fallback plan"
+  },
   "model": "qwen3:8b",
   "provider": "ollama",
   "repo_files_snapshot": [
@@ -50,6 +81,6 @@
   "started_at": "2026-02-12T03:19:16.117462+00:00",
   "max_rounds": 10,
   "max_llm_calls": 8,
-  "consecutive_errors": 0,
-  "updated_at": "2026-02-12T03:19:16.117478+00:00"
+  "consecutive_errors": 1,
+  "updated_at": "2026-02-12T03:30:07.971299+00:00"
 }
