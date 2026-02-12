@@ -149,6 +149,8 @@ jobs:
           BOT_LOGIN: crowd-agent-bot[bot]
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
+          ROUND_PHASE: ${{ needs.router.outputs.phase }}
+          ROUND_NUMBER: ${{ needs.router.outputs.round_number }}
         run: python agent/round_main.py --phase llm_work
 
   # ──────────────────────────────────────────────

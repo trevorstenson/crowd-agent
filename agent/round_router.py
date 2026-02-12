@@ -52,26 +52,26 @@ def route_round(config: dict) -> dict:
             raise RuntimeError(f"No state file found on branch {state_branch}")
 
     if state is not None:
-        # Continuing an existing round
+        # Continuing an existing round — determine phase from pending_decision
+        # NOTE: We only compute outputs here. We do NOT save_state() because
+        # the router runs on a different runner than llm_work. The phase
+        # transition is applied by llm_work via ROUND_PHASE env var.
         phase = state.get("current_phase", "plan")
+        round_number = state.get("round_number", 1)
 
-        # Apply pending decision from previous round
         decision = state.get("pending_decision")
         if decision:
             phase = decision.get("next_phase", phase)
-            state["current_phase"] = phase
-            state["pending_decision"] = None
-            state["round_number"] = state.get("round_number", 1) + 1
-            save_state(state)
+            round_number += 1
 
-        logger.info(f"Continuing round {state['round_number']}, phase={phase}")
+        logger.info(f"Continuing round {round_number}, phase={phase}")
 
         return {
             "phase": phase,
             "has_llm": "true" if phase in ("plan", "edit") else "false",
             "has_explore": "false",  # Phase 1: no explore
             "explore_matrix": "[]",
-            "round_number": str(state.get("round_number", 1)),
+            "round_number": str(round_number),
             "issue_number": str(state["issue_number"]),
             "state_branch": state["branch"],
         }

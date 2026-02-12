@@ -60,9 +60,15 @@ def phase_route():
 
 
 def phase_llm_work():
-    """LLM job: run planner or editor based on state."""
+    """LLM job: run planner or editor based on state.
+
+    The authoritative phase and round come from ROUND_PHASE / ROUND_NUMBER
+    env vars (set by the router's workflow outputs). The state file on disk
+    may be stale because the router runs on a different runner and can't
+    commit its state updates to the branch.
+    """
     from main import load_config, load_system_prompt
-    from round_state import load_state
+    from round_state import load_state, save_state
     from round_llm import run_llm_work
 
     print("=== Dynamic Agent: LLM Work Phase ===")
@@ -73,6 +79,18 @@ def phase_llm_work():
     state = load_state()
     if state is None:
         raise RuntimeError("No state file found — route phase must run first")
+
+    # Apply phase transition from router outputs (env vars are authoritative,
+    # state file may be stale since router runs on a different runner)
+    env_phase = os.environ.get("ROUND_PHASE", "")
+    env_round = os.environ.get("ROUND_NUMBER", "")
+    if env_phase and env_phase != state.get("current_phase"):
+        logger.info(f"Applying phase transition from router: "
+                    f"{state.get('current_phase')} -> {env_phase}")
+        state["current_phase"] = env_phase
+        state["pending_decision"] = None
+    if env_round:
+        state["round_number"] = int(env_round)
 
     print(f"Phase: {state.get('current_phase')}, "
           f"Round: {state.get('round_number')}, "
