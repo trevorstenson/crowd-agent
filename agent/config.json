@@ -13,5 +13,11 @@
   },
   "chaining": {
     "max_chain_depth": 15
+  },
+  "parallel": {
+    "max_exploration_tasks": 8,
+    "max_steps_per_task": 6,
+    "max_edit_turns": 4,
+    "planner_max_tokens": 2000
   }
 }

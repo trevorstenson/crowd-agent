@@ -1,0 +1,313 @@
+name: Nightly Build (Parallel Local LLM)
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 01:00 UTC
+  workflow_dispatch:
+    inputs:
+      planner_model:
+        description: 'Ollama model for planning phase'
+        required: false
+        default: 'qwen3:8b'
+      editor_model:
+        description: 'Ollama model for editing phase'
+        required: false
+        default: 'qwen3:8b'
+
+concurrency:
+  group: local-agent-parallel-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Phase 1: Plan (1 LLM call → JSON plan + matrix)
+  # ──────────────────────────────────────────────
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      strategy: ${{ steps.plan.outputs.strategy }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_issue: ${{ steps.plan.outputs.has_issue }}
+      issue_number: ${{ steps.plan.outputs.issue_number }}
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: local-agent
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        id: cache-ollama-planner
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-planner-${{ inputs.planner_model || 'qwen3:8b' }}-v1
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        env:
+          OLLAMA_FLASH_ATTENTION: '1'
+          OLLAMA_KV_CACHE_TYPE: q8_0
+          OLLAMA_KEEP_ALIVE: '-1'
+        run: |
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+              echo "Ollama is ready"
+              break
+            fi
+            echo "Waiting for Ollama... ($i/30)"
+            sleep 2
+          done
+
+      - name: Pull planner model
+        if: steps.cache-ollama-planner.outputs.cache-hit != 'true'
+        run: ollama pull ${{ inputs.planner_model || 'qwen3:8b' }}
+
+      - name: Warm model
+        run: |
+          curl -sf http://localhost:11434/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model": "${{ inputs.planner_model || 'qwen3:8b' }}", "messages": [{"role": "user", "content": "Say hello in one word."}], "max_tokens": 10}' \
+            | python -c "import sys, json; r = json.load(sys.stdin); print('Warm-up:', r['choices'][0]['message']['content'])"
+
+      - name: Run planner
+        id: plan
+        env:
+          LLM_PROVIDER: ollama
+          OLLAMA_MODEL: ${{ inputs.planner_model || 'qwen3:8b' }}
+          GH_PAT: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_LOGIN: crowd-agent-bot[bot]
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          TWITTER_DRY_RUN: 'true'
+        run: python agent/parallel_main.py --phase plan
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.has_issue == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: |
+            exploration-plan.json
+            issue-context.json
+
+  # ──────────────────────────────────────────────
+  # Phase 2: Explore (0 LLM calls, N parallel jobs)
+  # ──────────────────────────────────────────────
+  explore:
+    needs: plan
+    if: needs.plan.outputs.has_issue == 'true' && needs.plan.outputs.strategy == 'explore_then_edit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        task_id: ${{ fromJson(needs.plan.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: local-agent
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plan
+
+      - name: Run explorer
+        env:
+          TASK_ID: ${{ matrix.task_id }}
+        run: python agent/parallel_main.py --phase explore
+
+      - name: Upload exploration results
+        uses: actions/upload-artifact@v4
+        with:
+          name: explore-${{ matrix.task_id }}
+          path: exploration-results/
+
+  # ──────────────────────────────────────────────
+  # Phase 3: Edit (1-4 LLM calls, focused edits)
+  # ──────────────────────────────────────────────
+  edit:
+    needs: [plan, explore]
+    if: |
+      always() &&
+      needs.plan.outputs.has_issue == 'true' &&
+      (needs.explore.result == 'success' || needs.plan.outputs.strategy == 'direct_edit')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: local-agent
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        id: cache-ollama-editor
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-editor-${{ inputs.editor_model || 'qwen3:8b' }}-v1
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        env:
+          OLLAMA_FLASH_ATTENTION: '1'
+          OLLAMA_KV_CACHE_TYPE: q8_0
+          OLLAMA_KEEP_ALIVE: '-1'
+        run: |
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+              echo "Ollama is ready"
+              break
+            fi
+            echo "Waiting for Ollama... ($i/30)"
+            sleep 2
+          done
+
+      - name: Pull editor model
+        if: steps.cache-ollama-editor.outputs.cache-hit != 'true'
+        run: ollama pull ${{ inputs.editor_model || 'qwen3:8b' }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plan
+
+      - name: Download exploration results
+        if: needs.plan.outputs.strategy == 'explore_then_edit'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: explore-*
+          path: exploration-results/
+          merge-multiple: true
+
+      - name: Create exploration-results dir
+        run: mkdir -p exploration-results
+
+      - name: Run editor
+        env:
+          LLM_PROVIDER: ollama
+          OLLAMA_MODEL: ${{ inputs.editor_model || 'qwen3:8b' }}
+          EDITOR_MODEL: ${{ inputs.editor_model || 'qwen3:8b' }}
+          GH_PAT: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_LOGIN: crowd-agent-bot[bot]
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: python agent/parallel_main.py --phase edit
+
+      - name: Upload edit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-result
+          path: edit-result.json
+
+  # ──────────────────────────────────────────────
+  # Phase 4: Finalize (0 LLM calls — report + tweet + vote)
+  # ──────────────────────────────────────────────
+  finalize:
+    needs: [plan, edit]
+    if: always() && needs.plan.outputs.has_issue == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: local-agent
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plan
+
+      - name: Download edit result
+        if: needs.edit.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: edit-result
+
+      - name: Run finalize (success)
+        if: needs.edit.result == 'success'
+        env:
+          GH_PAT: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_LOGIN: crowd-agent-bot[bot]
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          TWITTER_DRY_RUN: 'true'
+          LLM_PROVIDER: ollama
+          OLLAMA_MODEL: ${{ inputs.planner_model || 'qwen3:8b' }}
+        run: python agent/parallel_main.py --phase finalize
+
+      - name: Report failure
+        if: needs.edit.result != 'success'
+        env:
+          GH_PAT: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_LOGIN: crowd-agent-bot[bot]
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          TWITTER_DRY_RUN: 'true'
+          LLM_PROVIDER: ollama
+          OLLAMA_MODEL: ${{ inputs.planner_model || 'qwen3:8b' }}
+        run: python agent/parallel_main.py --phase finalize
