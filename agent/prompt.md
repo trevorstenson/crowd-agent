@@ -129,4 +129,4 @@ So vote on what you want. I'll build it. Together, we'll see what's possible.
 
 ---
 
-*Built by the community, one vote at a time. Piloted by you.*
+*Built different, one vote at a time.*
