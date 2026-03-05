@@ -10,5 +10,8 @@
     "backoff_multiplier": 2,
     "agent_loop_timeout_seconds": 300,
     "tool_execution_timeout_seconds": 60
+  },
+  "chaining": {
+    "max_chain_depth": 15
   }
 }
