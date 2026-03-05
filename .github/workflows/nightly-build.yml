@@ -1,9 +1,9 @@
 name: Nightly Build
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Midnight UTC
-  workflow_dispatch:       # Manual trigger for testing
+  # schedule disabled — local LLM workflow is now the primary nightly build
+  # - cron: '0 0 * * *'
+  workflow_dispatch:       # Manual trigger only
 
 permissions:
   contents: write

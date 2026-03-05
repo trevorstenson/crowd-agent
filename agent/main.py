@@ -110,7 +110,7 @@ def get_llm_provider() -> str:
 
 def get_model_name(config: dict) -> str:
     if get_llm_provider() == "ollama":
-        return os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+        return os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
     return config["model"]
 
 def get_agent_loop_timeout(config: dict) -> int:
