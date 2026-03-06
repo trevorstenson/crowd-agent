@@ -39,17 +39,17 @@ jobs:
             TRACK_NAME="$1"
             TRACK_KEY="$2"
             BODY_FILE=$(mktemp)
-            cat > "$BODY_FILE" <<EOF
-This issue represents strategic pressure on the \`${TRACK_NAME}\` track.
-
-Use reactions to push the organism:
-- \`+1\` means "optimize harder for this trait"
-- \`-1\` means "deprioritize this trait"
-
-This is not a task queue. It is a steering surface.
-
-See \`EVOLUTION_GOVERNANCE.md\` for the current model.
-EOF
+            {
+              echo "This issue represents strategic pressure on the \`${TRACK_NAME}\` track."
+              echo
+              echo "Use reactions to push the organism:"
+              echo "- \`+1\` means \"optimize harder for this trait\""
+              echo "- \`-1\` means \"deprioritize this trait\""
+              echo
+              echo "This is not a task queue. It is a steering surface."
+              echo
+              echo "See \`EVOLUTION_GOVERNANCE.md\` for the current model."
+            } > "$BODY_FILE"
 
             ISSUE_NUMBER=$(gh issue list --repo "$REPO" --state open --search "in:title \"Track: ${TRACK_NAME}\"" \
               --json number,title --jq ".[] | select(.title == \"Track: ${TRACK_NAME}\") | .number" | head -1)
