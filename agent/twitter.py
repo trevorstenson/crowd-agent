@@ -2,7 +2,7 @@
 Twitter/X integration for Crowd Agent nightly builds.
 
 Posts tweets at two points in the build cycle:
-- Pre-build: announces which issue won the vote
+- Pre-build: announces which mutation is being built
 - Post-build: links to the PR, or reports failure
 
 This module is a non-critical side effect — if tweeting fails,
@@ -76,7 +76,7 @@ def _post_tweet(text: str, dry_run: bool = False) -> str | None:
 
 def format_build_start_tweet(issue_title: str, issue_number: int, repo_owner: str, repo_name: str) -> str:
     url = f"https://github.com/{repo_owner}/{repo_name}/issues/{issue_number}"
-    return f"Tonight the community voted for Fenton to build: {issue_title}\n\n{url}"
+    return f"Tonight Fenton is evolving: {issue_title}\n\n{url}"
 
 
 def format_build_success_tweet(issue_title: str, pr_url: str) -> str:
@@ -87,7 +87,7 @@ def format_build_failure_tweet(issue_title: str, issue_number: int, repo_owner: 
     url = f"https://github.com/{repo_owner}/{repo_name}/issues/{issue_number}"
     return (
         f"Fenton attempted to build: {issue_title} but hit a snag. "
-        f"The issue is back in the voting pool.\n\n{url}"
+        f"The mutation is back in the queue.\n\n{url}"
     )
 
 

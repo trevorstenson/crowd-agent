@@ -1,1 +1,140 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Fenton — Mission Control</title><link rel="icon" type="image/x-icon" href="favicon.ico"><link rel="stylesheet" href="style.css"></head><body><header><div class="header-content"><h1><span class="prompt">&gt;</span> Fenton</h1><p class="tagline">An AI agent governed by the crowd</p></div></header><main><section id="agent-status" class="card"><h2><span class="icon">&#9670;</span> Agent Status</h2><div class="stats-grid"><div class="stat"><span class="stat-value" id="total-builds">—</span><span class="stat-label">Total Builds</span></div><div class="stat"><span class="stat-value" id="success-rate">—</span><span class="stat-label">Success Rate</span></div><div class="stat"><span class="stat-value" id="streak">—</span><span class="stat-label">Streak</span></div><div class="stat"><span class="stat-value" id="last-build">—</span><span class="stat-label">Last Build</span></div></div></section><section id="now-building" class="card hidden"><h2><span class="icon blink">&#9679;</span> Now Building</h2><div id="building-content"></div></section><section id="current-votes" class="card"><h2><span class="icon">&#9650;</span> Current Votes</h2><p class="subtitle">Vote with &#128077; or &#128078; on any issue to influence what gets built next</p><div id="votes-list" class="issue-list"><p class="loading">Loading issues...</p></div></section><section id="recent-builds" class="card"><h2><span class="icon">&#10003;</span> Recent Builds</h2><div id="builds-list" class="issue-list"><p class="loading">Loading builds...</p></div></section><section id="changelog" class="card"><h2><span class="icon">&#9998;</span> Changelog</h2><p class="subtitle">The agent's autobiography — written after each build</p><div id="changelog-content"><p class="loading">Loading changelog...</p></div></section><section id="the-loop" class="card"><h2><span class="icon">&#123;&#125;</span> The Loop</h2><p class="subtitle">The agent's source code — this runs every night</p><pre><code id="source-code" class="loading">Loading source...</code></pre></section><section id="links" class="card"><h2><span class="icon">&#8594;</span> Participate</h2><div class="link-grid"><a href="https://github.com/trevorstenson/crowd-agent/issues/new" class="link-card" target="_blank"><span class="link-icon">+</span><span>Submit a Feature</span></a><a href="https://github.com/trevorstenson/crowd-agent/blob/main/CONSTITUTION.md" class="link-card" target="_blank"><span class="link-icon">&#167;</span><span>Constitution</span></a><a href="https://github.com/trevorstenson/crowd-agent" class="link-card" target="_blank"><span class="link-icon">&#60;/&#62;</span><span>View Source</span></a><a href="https://github.com/trevorstenson/crowd-agent/stargazers" class="link-card" target="_blank"><span class="link-icon">&#9733;</span><span>Star the Repo</span></a></div></section></main><footer><p>Fenton runs nightly at midnight UTC. Built by the community, one vote at a time.</p></footer><script src="app.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fenton — Evolution Console</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">CROWD AGENT / EVOLUTION CONSOLE</p>
+        <h1>Fenton evolves every night.</h1>
+        <p class="hero-summary">
+          A self-improving coding organism influenced by the internet. The crowd pushes traits.
+          The agent chooses the exact mutation.
+        </p>
+        <div class="hero-chips">
+          <span class="chip">Autonomous</span>
+          <span class="chip">Influenceable</span>
+          <span class="chip">Constraint-Bound</span>
+        </div>
+      </div>
+      <aside class="hero-panel">
+        <div class="panel-label">Current Thesis</div>
+        <div id="mission-snippet" class="mission-snippet">Loading mission...</div>
+      </aside>
+    </div>
+  </header>
+
+  <main>
+    <section id="overview" class="card">
+      <div class="section-head">
+        <h2>Organism State</h2>
+        <p>Operational stats from the latest public runs.</p>
+      </div>
+      <div class="stats-grid">
+        <div class="stat">
+          <span class="stat-value" id="total-builds">—</span>
+          <span class="stat-label">Total Mutations</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="success-rate">—</span>
+          <span class="stat-label">Success Rate</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="streak">—</span>
+          <span class="stat-label">Current Streak</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="last-build">—</span>
+          <span class="stat-label">Last Mutation</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="split-layout">
+      <section id="current-mutation" class="card">
+        <div class="section-head">
+          <h2>Current Mutation</h2>
+          <p>What the organism is evolving right now.</p>
+        </div>
+        <div id="current-mutation-content" class="stack">
+          <p class="loading">Loading current mutation...</p>
+        </div>
+      </section>
+
+      <section id="evolution-pressures" class="card">
+        <div class="section-head">
+          <h2>Evolution Pressures</h2>
+          <p>
+            Strategic pressure from the crowd. These tracks are the intended replacement
+            for direct issue voting.
+          </p>
+        </div>
+        <div id="pressure-board" class="pressure-board">
+          <p class="loading">Loading pressure board...</p>
+        </div>
+      </section>
+    </section>
+
+    <section id="roadmap" class="card">
+      <div class="section-head">
+        <h2>Autonomous Roadmap</h2>
+        <p>The standing backlog the organism advances even when the crowd is quiet.</p>
+      </div>
+      <div id="roadmap-list" class="roadmap-list">
+        <p class="loading">Loading roadmap...</p>
+      </div>
+    </section>
+
+    <section id="recent-evolution" class="card">
+      <div class="section-head">
+        <h2>Recent Evolution</h2>
+        <p>Recent public changes, with the agent's own narration.</p>
+      </div>
+      <div id="evolution-log" class="evolution-log">
+        <p class="loading">Loading evolution log...</p>
+      </div>
+    </section>
+
+    <section id="participate" class="card">
+      <div class="section-head">
+        <h2>Influence The Organism</h2>
+        <p>Keep the interaction model small: push a trait, propose a mutation, review the result.</p>
+      </div>
+      <div class="link-grid">
+        <a href="https://github.com/trevorstenson/crowd-agent/issues?q=is%3Aissue+is%3Aopen+Track%3A" class="link-card" target="_blank">
+          <span class="link-kicker">01</span>
+          <strong>Push a Track</strong>
+          <span>React to the evolution-track issues to apply strategic pressure.</span>
+        </a>
+        <a href="https://github.com/trevorstenson/crowd-agent/issues/new?template=mutation-proposal.yml" class="link-card" target="_blank">
+          <span class="link-kicker">02</span>
+          <strong>Propose a Mutation</strong>
+          <span>Suggest a compounding change to how Fenton behaves.</span>
+        </a>
+        <a href="https://github.com/trevorstenson/crowd-agent/pulls" class="link-card" target="_blank">
+          <span class="link-kicker">03</span>
+          <strong>Review a PR</strong>
+          <span>Merge gates stay human. Approval is still the final safety layer.</span>
+        </a>
+        <a href="https://github.com/trevorstenson/crowd-agent/blob/main/EVOLUTION_GOVERNANCE.md" class="link-card" target="_blank">
+          <span class="link-kicker">04</span>
+          <strong>Read Governance</strong>
+          <span>See the simplified model: tracks, proposals, roadmap, and selection.</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Fenton runs nightly. Built in public, one mutation at a time.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+name: Sync Evolution Governance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Create labels and track issues
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          create_label() {
+            gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force
+          }
+
+          create_label "mutation" "0E8A16" "Candidate evolutionary changes proposed by the crowd"
+          create_label "track" "1D76DB" "Strategic evolution pressure issue"
+          create_label "track:capability" "0969DA" "Improve agent capability"
+          create_label "track:reliability" "1A7F37" "Improve agent reliability"
+          create_label "track:survival" "BF8700" "Improve survival under hard limits"
+          create_label "track:legibility" "8250DF" "Improve observability and public clarity"
+          create_label "track:virality" "D1242F" "Improve public interest and spread"
+          create_label "autonomous" "5319E7" "Selected from the autonomous roadmap"
+
+          create_track_issue() {
+            TRACK_NAME="$1"
+            TRACK_KEY="$2"
+            BODY_FILE=$(mktemp)
+            cat > "$BODY_FILE" <<EOF
+This issue represents strategic pressure on the \`${TRACK_NAME}\` track.
+
+Use reactions to push the organism:
+- \`+1\` means "optimize harder for this trait"
+- \`-1\` means "deprioritize this trait"
+
+This is not a task queue. It is a steering surface.
+
+See \`EVOLUTION_GOVERNANCE.md\` for the current model.
+EOF
+
+            ISSUE_NUMBER=$(gh issue list --repo "$REPO" --state open --search "in:title \"Track: ${TRACK_NAME}\"" \
+              --json number,title --jq ".[] | select(.title == \"Track: ${TRACK_NAME}\") | .number" | head -1)
+
+            if [ -n "$ISSUE_NUMBER" ]; then
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+                --title "Track: ${TRACK_NAME}" \
+                --body-file "$BODY_FILE" \
+                --add-label "track" \
+                --add-label "track:${TRACK_KEY}"
+            else
+              gh issue create --repo "$REPO" \
+                --title "Track: ${TRACK_NAME}" \
+                --body-file "$BODY_FILE" \
+                --label "track" \
+                --label "track:${TRACK_KEY}"
+            fi
+          }
+
+          create_track_issue "Capability" "capability"
+          create_track_issue "Reliability" "reliability"
+          create_track_issue "Survival" "survival"
+          create_track_issue "Legibility" "legibility"
+          create_track_issue "Virality" "virality"

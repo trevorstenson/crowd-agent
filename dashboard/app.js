@@ -1,8 +1,13 @@
-// Crowd Agent Dashboard
-// Fetches data from the GitHub API (unauthenticated) and renders the dashboard.
-
 const REPO = 'trevorstenson/crowd-agent';
 const API = 'https://api.github.com';
+
+const TRACKS = [
+  'Capability',
+  'Reliability',
+  'Survival',
+  'Legibility',
+  'Virality',
+];
 
 async function fetchJSON(url) {
   const res = await fetch(url);
@@ -10,14 +15,58 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-// --- Agent Stats ---
+function decodeBase64Unicode(content) {
+  const binary = atob(content.replace(/\n/g, ''));
+  const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function escapeHtml(text) {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function netReactions(issue) {
+  return (issue.reactions?.['+1'] || 0) - (issue.reactions?.['-1'] || 0);
+}
+
+function shortDate(iso) {
+  if (!iso) return 'Never';
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function truncate(text, limit = 180) {
+  if (!text) return '';
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1).trim()}…`;
+}
+
+function issueTrack(issue) {
+  const labels = issue.labels || [];
+  for (const label of labels) {
+    const name = typeof label === 'string' ? label : label.name;
+    if (name && name.startsWith('track:')) {
+      return name.replace('track:', '');
+    }
+  }
+  const titleMatch = (issue.title || '').match(/\[(capability|reliability|survival|legibility|virality)\]/i);
+  return titleMatch ? titleMatch[1].toLowerCase() : '';
+}
 
 async function loadAgentStats() {
   try {
     const data = await fetchJSON(`${API}/repos/${REPO}/contents/agent/memory.json`);
-    const memory = JSON.parse(atob(data.content));
+    const memory = JSON.parse(decodeBase64Unicode(data.content));
 
     document.getElementById('total-builds').textContent = memory.total_builds;
+    document.getElementById('streak').textContent = memory.streak;
+    document.getElementById('last-build').textContent = shortDate(memory.last_build_date);
 
     if (memory.total_builds > 0) {
       const rate = Math.round((memory.successful_builds / memory.total_builds) * 100);
@@ -25,17 +74,8 @@ async function loadAgentStats() {
     } else {
       document.getElementById('success-rate').textContent = 'N/A';
     }
-
-    document.getElementById('streak').textContent = memory.streak;
-
-    if (memory.last_build_date) {
-      const date = new Date(memory.last_build_date);
-      document.getElementById('last-build').textContent = date.toLocaleDateString();
-    } else {
-      document.getElementById('last-build').textContent = 'Never';
-    }
-  } catch (e) {
-    console.warn('Could not load agent stats:', e);
+  } catch (error) {
+    console.warn('Could not load agent stats:', error);
     document.getElementById('total-builds').textContent = '0';
     document.getElementById('success-rate').textContent = 'N/A';
     document.getElementById('streak').textContent = '0';
@@ -43,215 +83,216 @@ async function loadAgentStats() {
   }
 }
 
-// --- Issues ---
-
-function createIssueItem(issue, showVotes) {
-  const a = document.createElement('a');
-  a.href = issue.html_url;
-  a.target = '_blank';
-  a.className = 'issue-item';
-
-  if (showVotes) {
-    const up = issue.reactions?.['+1'] || 0;
-    const down = issue.reactions?.['-1'] || 0;
-    const net = up - down;
-    const voteEl = document.createElement('span');
-    voteEl.className = 'vote-count' + (net < 0 ? ' vote-negative' : net === 0 ? ' vote-zero' : '');
-    voteEl.textContent = (net > 0 ? '\u25B2 ' : net < 0 ? '\u25BC ' : '- ') + Math.abs(net);
-    a.appendChild(voteEl);
-  }
-
-  const titleEl = document.createElement('span');
-  titleEl.className = 'issue-title';
-  titleEl.textContent = issue.title;
-  a.appendChild(titleEl);
-
-  const numEl = document.createElement('span');
-  numEl.className = 'issue-number';
-  numEl.textContent = `#${issue.number}`;
-  a.appendChild(numEl);
-
-  return a;
-}
-
-async function loadVotingIssues() {
-  const container = document.getElementById('votes-list');
+async function loadMission() {
+  const container = document.getElementById('mission-snippet');
   try {
-    const issues = await fetchJSON(
-      `${API}/repos/${REPO}/issues?labels=voting&state=open&sort=reactions-%2B1&direction=desc&per_page=20`
-    );
-
-    container.innerHTML = '';
-    if (issues.length === 0) {
-      container.innerHTML = '<p class="empty-state">No issues up for vote right now. Submit one!</p>';
-      return;
-    }
-
-    // Sort by net votes (upvotes minus downvotes)
-    issues.sort((a, b) => {
-      const netA = (a.reactions?.['+1'] || 0) - (a.reactions?.['-1'] || 0);
-      const netB = (b.reactions?.['+1'] || 0) - (b.reactions?.['-1'] || 0);
-      return netB - netA;
-    });
-
-    for (const issue of issues) {
-      container.appendChild(createIssueItem(issue, true));
-    }
-  } catch (e) {
-    console.warn('Could not load voting issues:', e);
-    container.innerHTML = '<p class="empty-state">Could not load issues. Try refreshing.</p>';
+    const data = await fetchJSON(`${API}/repos/${REPO}/contents/agent/mission.md`);
+    const mission = decodeBase64Unicode(data.content)
+      .split('\n')
+      .filter(line => line.trim() && !line.startsWith('#'))
+      .slice(0, 3)
+      .join(' ');
+    container.textContent = mission;
+  } catch (error) {
+    console.warn('Could not load mission:', error);
+    container.textContent = 'Become a more capable, autonomous, and legible software-building organism.';
   }
 }
 
-async function loadBuildingIssues() {
-  const section = document.getElementById('now-building');
-  const container = document.getElementById('building-content');
+async function loadCurrentMutation() {
+  const container = document.getElementById('current-mutation-content');
   try {
-    const issues = await fetchJSON(
-      `${API}/repos/${REPO}/issues?labels=building&state=open&per_page=5`
-    );
+    const [buildingIssues, roadmapData] = await Promise.all([
+      fetchJSON(`${API}/repos/${REPO}/issues?labels=building&state=open&per_page=5`),
+      fetchJSON(`${API}/repos/${REPO}/contents/agent/autonomous_roadmap.json`),
+    ]);
+    const roadmap = JSON.parse(decodeBase64Unicode(roadmapData.content));
 
-    if (issues.length === 0) {
-      section.classList.add('hidden');
+    container.innerHTML = '';
+
+    if (buildingIssues.length > 0) {
+      const issue = buildingIssues[0];
+      const autonomous = issue.title.toLowerCase().startsWith('[autonomous]');
+      container.innerHTML = `
+        <div class="mutation-status ${autonomous ? 'status-autonomous' : 'status-crowd'}">
+          ${autonomous ? 'Autonomous mutation in progress' : 'Crowd-influenced mutation in progress'}
+        </div>
+        <a class="mutation-title" href="${issue.html_url}" target="_blank">${escapeHtml(issue.title)}</a>
+        <p class="mutation-body">${escapeHtml(truncate(issue.body || 'No summary provided.', 260))}</p>
+        <div class="meta-row">
+          <span>#${issue.number}</span>
+          <span>${shortDate(issue.updated_at)}</span>
+        </div>
+      `;
       return;
     }
 
-    section.classList.remove('hidden');
-    container.innerHTML = '';
-    for (const issue of issues) {
-      container.appendChild(createIssueItem(issue, false));
+    const nextTask = (roadmap.tasks || []).find(task => task.status !== 'done');
+    if (!nextTask) {
+      container.innerHTML = '<p class="empty-state">No active mutation and no roadmap task queued.</p>';
+      return;
     }
-  } catch (e) {
-    console.warn('Could not load building issues:', e);
-    section.classList.add('hidden');
+
+    container.innerHTML = `
+      <div class="mutation-status status-dormant">No active build right now</div>
+      <div class="mutation-title">${escapeHtml(nextTask.title)}</div>
+      <p class="mutation-body">${escapeHtml(nextTask.summary)}</p>
+      <div class="meta-row">
+        <span>Track: ${escapeHtml(nextTask.track)}</span>
+        <span>Priority ${nextTask.priority}</span>
+      </div>
+    `;
+  } catch (error) {
+    console.warn('Could not load current mutation:', error);
+    container.innerHTML = '<p class="empty-state">Could not load the current mutation.</p>';
   }
 }
 
-async function loadRecentBuilds() {
-  const container = document.getElementById('builds-list');
+function pressureCard(track, issue) {
+  const card = document.createElement('article');
+  card.className = 'pressure-card';
+
+  if (!issue) {
+    card.innerHTML = `
+      <div class="pressure-top">
+        <h3>${track}</h3>
+        <span class="pressure-score pressure-missing">Not wired</span>
+      </div>
+      <p class="pressure-note">Create a pinned issue titled "Track: ${track}" to make this pressure live.</p>
+      <div class="pressure-bar"><span style="width: 0%"></span></div>
+    `;
+    return card;
+  }
+
+  const score = netReactions(issue);
+  const normalized = Math.max(0, Math.min(100, 50 + score * 10));
+  const scoreLabel = score > 0 ? `+${score}` : `${score}`;
+
+  card.innerHTML = `
+    <div class="pressure-top">
+      <h3>${track}</h3>
+      <a class="pressure-score" href="${issue.html_url}" target="_blank">${scoreLabel}</a>
+    </div>
+    <p class="pressure-note">${truncate(issue.body || 'Track issue is live and collecting pressure.', 120)}</p>
+    <div class="pressure-bar"><span style="width: ${normalized}%"></span></div>
+  `;
+  return card;
+}
+
+async function loadTrackPressures() {
+  const container = document.getElementById('pressure-board');
   try {
-    const issues = await fetchJSON(
-      `${API}/repos/${REPO}/issues?labels=shipped&state=closed&per_page=10&sort=updated&direction=desc`
-    );
+    const issues = await fetchJSON(`${API}/repos/${REPO}/issues?state=open&per_page=100`);
+    const trackIssues = new Map();
+
+    for (const issue of issues) {
+      const match = (issue.title || '').match(/^track:\s*(.+)$/i);
+      if (match) {
+        trackIssues.set(match[1].trim().toLowerCase(), issue);
+      }
+    }
 
     container.innerHTML = '';
-    if (issues.length === 0) {
-      container.innerHTML = '<p class="empty-state">No builds shipped yet. The first one is coming soon.</p>';
+    for (const track of TRACKS) {
+      container.appendChild(pressureCard(track, trackIssues.get(track.toLowerCase())));
+    }
+  } catch (error) {
+    console.warn('Could not load track pressures:', error);
+    container.innerHTML = '<p class="empty-state">Could not load evolution pressures.</p>';
+  }
+}
+
+async function loadRoadmap() {
+  const container = document.getElementById('roadmap-list');
+  try {
+    const data = await fetchJSON(`${API}/repos/${REPO}/contents/agent/autonomous_roadmap.json`);
+    const roadmap = JSON.parse(decodeBase64Unicode(data.content));
+    const tasks = (roadmap.tasks || []).filter(task => task.status !== 'done').slice(0, 5);
+
+    container.innerHTML = '';
+    if (tasks.length === 0) {
+      container.innerHTML = '<p class="empty-state">No roadmap tasks are currently pending.</p>';
       return;
     }
 
-    for (const issue of issues) {
-      const item = createIssueItem(issue, false);
-      const label = document.createElement('span');
-      label.className = 'label-shipped';
-      label.textContent = 'SHIPPED';
-      item.appendChild(label);
+    for (const task of tasks) {
+      const item = document.createElement('article');
+      item.className = 'roadmap-item';
+      item.innerHTML = `
+        <div class="roadmap-top">
+          <strong>${escapeHtml(task.title)}</strong>
+          <span class="roadmap-priority">P${task.priority}</span>
+        </div>
+        <p>${escapeHtml(task.summary)}</p>
+        <div class="meta-row">
+          <span>${escapeHtml(task.track)}</span>
+          <span>${escapeHtml(task.status)}</span>
+        </div>
+      `;
       container.appendChild(item);
     }
-  } catch (e) {
-    console.warn('Could not load recent builds:', e);
-    container.innerHTML = '<p class="empty-state">Could not load builds. Try refreshing.</p>';
+  } catch (error) {
+    console.warn('Could not load roadmap:', error);
+    container.innerHTML = '<p class="empty-state">Could not load the autonomous roadmap.</p>';
   }
 }
 
-// --- Source Code ---
-
-async function loadSourceCode() {
-  const codeEl = document.getElementById('source-code');
-  try {
-    const data = await fetchJSON(`${API}/repos/${REPO}/contents/agent/main.py`);
-    const source = atob(data.content);
-    codeEl.textContent = source;
-    codeEl.classList.remove('loading');
-  } catch (e) {
-    console.warn('Could not load source code:', e);
-    codeEl.textContent = 'Could not load source code.';
-    codeEl.classList.remove('loading');
-  }
+function parseChangelogEntries(markdown) {
+  const sections = markdown.split(/\n---\n/).filter(section => section.trim());
+  return sections.slice(1).map(section => {
+    const lines = section.trim().split('\n').filter(Boolean);
+    const heading = lines[0] || '';
+    const meta = lines[1] || '';
+    const body = lines.slice(2).join(' ');
+    const match = heading.match(/^##\s*\[([+x])\]\s*(.*)/);
+    return {
+      success: !match || match[1] === '+',
+      title: match ? match[2] : heading.replace(/^#+\s*/, ''),
+      meta: meta.replace(/\*\*/g, ''),
+      body,
+    };
+  });
 }
 
-// --- Changelog ---
-
-async function loadChangelog() {
-  const container = document.getElementById('changelog-content');
+async function loadRecentEvolution() {
+  const container = document.getElementById('evolution-log');
   try {
     const data = await fetchJSON(`${API}/repos/${REPO}/contents/CHANGELOG.md`);
-    const markdown = atob(data.content);
-
-    // Split into entries on "---" separators, skip the header
-    const sections = markdown.split(/\n---\n/).filter(s => s.trim());
-    // First section is the header ("# Crowd Agent Changelog\n\n..."), skip it
-    const entries = sections.slice(1);
+    const entries = parseChangelogEntries(decodeBase64Unicode(data.content)).slice(0, 5);
 
     container.innerHTML = '';
     if (entries.length === 0) {
-      container.innerHTML = '<p class="empty-state">No builds yet. The first changelog entry is coming soon.</p>';
+      container.innerHTML = '<p class="empty-state">No evolution log entries yet.</p>';
       return;
     }
 
     for (const entry of entries) {
-      const lines = entry.trim().split('\n').filter(l => l.trim());
-      if (lines.length === 0) continue;
-
-      const el = document.createElement('div');
-
-      // Parse heading: "## [+] #1 — Title" or "## [x] #1 — Title"
-      const headingMatch = lines[0]?.match(/^##\s*\[([+x])\]\s*(.*)/);
-      const metaLine = lines[1] || '';
-      const bodyLines = lines.slice(2);
-
-      const success = headingMatch ? headingMatch[1] === '+' : true;
-      const title = headingMatch ? headingMatch[2] : lines[0].replace(/^#+\s*/, '');
-
-      el.className = `changelog-entry ${success ? 'changelog-success' : 'changelog-failure'}`;
-
-      const statusIcon = document.createElement('span');
-      statusIcon.className = 'changelog-status';
-      statusIcon.textContent = success ? '+' : 'x';
-      el.appendChild(statusIcon);
-
-      const content = document.createElement('div');
-      content.className = 'changelog-body';
-
-      const titleEl = document.createElement('div');
-      titleEl.className = 'changelog-title';
-      titleEl.textContent = title;
-      content.appendChild(titleEl);
-
-      if (metaLine) {
-        const metaEl = document.createElement('div');
-        metaEl.className = 'changelog-meta';
-        metaEl.textContent = metaLine.replace(/\*\*/g, '');
-        content.appendChild(metaEl);
-      }
-
-      if (bodyLines.length > 0) {
-        const textEl = document.createElement('div');
-        textEl.className = 'changelog-text';
-        textEl.textContent = bodyLines.join(' ');
-        content.appendChild(textEl);
-      }
-
-      el.appendChild(content);
-      container.appendChild(el);
+      const element = document.createElement('article');
+      element.className = `evolution-entry ${entry.success ? 'evolution-success' : 'evolution-failure'}`;
+      element.innerHTML = `
+        <div class="evolution-mark">${entry.success ? '+' : 'x'}</div>
+        <div class="evolution-copy">
+          <strong>${escapeHtml(entry.title)}</strong>
+          <div class="evolution-meta">${escapeHtml(entry.meta)}</div>
+          <p>${escapeHtml(truncate(entry.body, 220))}</p>
+        </div>
+      `;
+      container.appendChild(element);
     }
-  } catch (e) {
-    console.warn('Could not load changelog:', e);
-    container.innerHTML = '<p class="empty-state">No builds yet. The first changelog entry is coming soon.</p>';
+  } catch (error) {
+    console.warn('Could not load recent evolution:', error);
+    container.innerHTML = '<p class="empty-state">Could not load the evolution log.</p>';
   }
 }
 
-// --- Init ---
-
 async function init() {
-  // Run all fetches in parallel
   await Promise.allSettled([
+    loadMission(),
     loadAgentStats(),
-    loadVotingIssues(),
-    loadBuildingIssues(),
-    loadRecentBuilds(),
-    loadSourceCode(),
-    loadChangelog(),
+    loadCurrentMutation(),
+    loadTrackPressures(),
+    loadRoadmap(),
+    loadRecentEvolution(),
   ]);
 }
 

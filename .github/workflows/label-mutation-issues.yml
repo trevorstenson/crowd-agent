@@ -1,0 +1,59 @@
+name: Label Mutation Issues
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    if: github.actor != 'crowd-agent-bot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Apply mutation and track labels
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,body)
+          TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+          BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+
+          normalize_track() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
+          }
+
+          extract_track() {
+            printf '%s\n' "$BODY" | awk '/^### Target Track$/{getline; print; exit}'
+          }
+
+          TRACK=$(normalize_track "$(extract_track)")
+
+          if printf '%s' "$TITLE" | grep -qi '^Track:'; then
+            TRACK_FROM_TITLE=$(normalize_track "$(printf '%s' "$TITLE" | sed -E 's/^Track:[[:space:]]*//I')")
+            if [ -n "$TRACK_FROM_TITLE" ]; then
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+                --add-label "track" \
+                --add-label "track:$TRACK_FROM_TITLE" \
+                --remove-label "mutation,voting"
+            fi
+            exit 0
+          fi
+
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "mutation" --remove-label "voting" || true
+
+          if [ -n "$TRACK" ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+              --remove-label "track:capability,track:reliability,track:survival,track:legibility,track:virality" || true
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "track:$TRACK"
+          fi

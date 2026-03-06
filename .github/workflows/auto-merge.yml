@@ -221,7 +221,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && !github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'agent/')
     runs-on: ubuntu-latest
     steps:
-      - name: Relabel issue back to voting
+      - name: Relabel linked mutation after rejection
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -233,15 +233,20 @@ jobs:
             --jq '.body' | grep -oP 'Closes #\K\d+' | head -1)
 
           if [ -n "$ISSUE_NUMBER" ]; then
-            echo "PR #$PR_NUMBER closed without merge. Relabeling issue #$ISSUE_NUMBER back to voting."
-            gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "voting" --remove-label "review,building"
+            ISSUE_JSON=$(gh issue view $ISSUE_NUMBER --repo $REPO --json title,labels)
+            RESTORE_LABEL="mutation"
 
-            # Reset all reactions on the issue so it starts fresh in the voting pool
-            echo "Resetting reactions on issue #$ISSUE_NUMBER"
-            gh api "repos/$REPO/issues/$ISSUE_NUMBER/reactions" --paginate \
-              --jq '.[].id' | while read REACTION_ID; do
-              gh api "repos/$REPO/issues/$ISSUE_NUMBER/reactions/$REACTION_ID" -X DELETE
-            done
+            if echo "$ISSUE_JSON" | jq -e '.title | ascii_downcase | startswith("[autonomous]")' > /dev/null; then
+              RESTORE_LABEL="autonomous"
+            elif echo "$ISSUE_JSON" | jq -e '.labels[]?.name | select(. == "voting")' > /dev/null; then
+              RESTORE_LABEL="voting"
+            fi
+
+            echo "PR #$PR_NUMBER closed without merge. Restoring issue #$ISSUE_NUMBER to $RESTORE_LABEL."
+            gh issue edit $ISSUE_NUMBER --repo $REPO \
+              --add-label "$RESTORE_LABEL" \
+              --add-label "rejected" \
+              --remove-label "review,building"
           fi
 
   cleanup-stale:
@@ -267,6 +272,14 @@ jobs:
               --jq '.body' | grep -oP 'Closes #\K\d+' | head -1)
 
             if [ -n "$ISSUE_NUMBER" ]; then
-              gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "rejected" --remove-label "review,building"
+              ISSUE_JSON=$(gh issue view $ISSUE_NUMBER --repo $REPO --json title)
+              RESTORE_LABEL="mutation"
+              if echo "$ISSUE_JSON" | jq -e '.title | ascii_downcase | startswith("[autonomous]")' > /dev/null; then
+                RESTORE_LABEL="autonomous"
+              fi
+              gh issue edit $ISSUE_NUMBER --repo $REPO \
+                --add-label "$RESTORE_LABEL" \
+                --add-label "rejected" \
+                --remove-label "review,building"
             fi
           done

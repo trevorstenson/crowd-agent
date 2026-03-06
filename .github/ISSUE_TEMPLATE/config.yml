@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Evolution Governance
+    url: https://github.com/trevorstenson/crowd-agent/blob/main/EVOLUTION_GOVERNANCE.md
+    about: Read how tracks, mutation proposals, roadmap tasks, and nightly selection work.
+  - name: Evolution Console
+    url: https://trevorstenson.github.io/crowd-agent/
+    about: See the organism's current trajectory and recent evolution.

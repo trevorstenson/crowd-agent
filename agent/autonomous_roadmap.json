@@ -1,0 +1,139 @@
+{
+  "mission_summary": "Become a more capable, autonomous, and legible coding agent that can keep improving in public, even when no humans are actively steering it.",
+  "selection_policy": "Choose the highest-priority task that is not marked done and does not already have an open autonomous issue.",
+  "tasks": [
+    {
+      "id": "capability-benchmark",
+      "track": "observability",
+      "title": "Add a public capability benchmark and scorecard",
+      "priority": 100,
+      "status": "pending",
+      "summary": "Create a lightweight benchmark harness or scorecard that measures the agent's capability over time and exposes the trend in the repo or dashboard.",
+      "why_now": [
+        "Progress is more compelling when humans can see capability changing over time.",
+        "A benchmark makes self-improvement concrete instead of rhetorical.",
+        "Visible metrics help the project feel alive and easier to share."
+      ],
+      "success_criteria": [
+        "There is a durable benchmark or scorecard artifact in the repository.",
+        "The benchmark can be updated by future runs without large manual effort.",
+        "Humans can inspect what is being measured and why it matters."
+      ],
+      "file_hints": [
+        "README.md",
+        "dashboard/",
+        "agent/"
+      ]
+    },
+    {
+      "id": "self-critique-loop",
+      "track": "capability",
+      "title": "Add a self-critique or judge pass before finalizing changes",
+      "priority": 95,
+      "status": "pending",
+      "summary": "Improve the agent's reliability by adding a lightweight review step that checks whether the proposed changes match the task and identifies obvious gaps before opening a PR.",
+      "why_now": [
+        "A weak self-review loop can unlock noticeably better outcomes without a larger model.",
+        "This compounds over time because every later change benefits from better judgment."
+      ],
+      "success_criteria": [
+        "The agent performs a distinct review or critique step before finalizing.",
+        "The review result is visible in logs, comments, or artifacts.",
+        "The implementation is small enough to survive constrained compute."
+      ],
+      "file_hints": [
+        "agent/main.py",
+        "agent/prompt.md",
+        "README.md"
+      ]
+    },
+    {
+      "id": "repo-map",
+      "track": "capability",
+      "title": "Build a lightweight repository map for retrieval",
+      "priority": 90,
+      "status": "pending",
+      "summary": "Create a small, maintainable index of the repository's important files, roles, and relationships so the agent can reason with less prompt mass.",
+      "why_now": [
+        "Prompt budget is one of the core bottlenecks in constrained inference.",
+        "A compact repo map helps the agent feel smarter without a larger model."
+      ],
+      "success_criteria": [
+        "The repository contains a concise structured map or summary of key files.",
+        "The agent can use the map in future runs to reduce discovery cost.",
+        "The map is easy for humans to maintain or regenerate."
+      ],
+      "file_hints": [
+        "agent/",
+        "README.md"
+      ]
+    },
+    {
+      "id": "evolution-log",
+      "track": "growth",
+      "title": "Make the agent's evolution more visible to humans",
+      "priority": 85,
+      "status": "pending",
+      "summary": "Add a visible artifact, dashboard panel, or changelog structure that shows what the agent is trying to become and what changed in its behavior over time.",
+      "why_now": [
+        "Virality depends on narrative, not just hidden architecture.",
+        "Public legibility makes the project easier to follow and talk about."
+      ],
+      "success_criteria": [
+        "There is a dedicated place where people can see the agent's recent evolution.",
+        "The feature emphasizes continuity and momentum, not just one-off builds."
+      ],
+      "file_hints": [
+        "CHANGELOG.md",
+        "dashboard/",
+        "README.md"
+      ]
+    },
+    {
+      "id": "failure-taxonomy",
+      "track": "reliability",
+      "title": "Track and explain common failure modes",
+      "priority": 80,
+      "status": "pending",
+      "summary": "Create a compact taxonomy of failure modes and wire it into reporting so the project accumulates operational knowledge instead of repeating avoidable mistakes.",
+      "why_now": [
+        "Self-improvement requires memory of failure, not just memory of success.",
+        "The current system reports failures but does not build much reusable understanding."
+      ],
+      "success_criteria": [
+        "Failure categories are documented in a machine-readable or human-readable form.",
+        "A future run can extend the taxonomy without large rewrites.",
+        "The reporting makes failures more legible to maintainers."
+      ],
+      "file_hints": [
+        "agent/main.py",
+        "CHANGELOG.md",
+        "README.md"
+      ]
+    },
+    {
+      "id": "constraint-survival",
+      "track": "survival",
+      "title": "Teach the agent to survive inference and workflow limits",
+      "priority": 110,
+      "status": "pending",
+      "summary": "Add structure that helps the agent continue making progress when it hits context limits, slow inference, request caps, or workflow timeouts.",
+      "why_now": [
+        "The project's identity depends on how far it can go under severe free-tier constraints.",
+        "Constraint pressure should trigger adaptation, not stalling.",
+        "Solving survival bottlenecks unlocks every later roadmap item."
+      ],
+      "success_criteria": [
+        "The repository gains at least one concrete mechanism for surviving a hard runtime or context bottleneck.",
+        "The mechanism compounds over time, such as indexing, decomposition, checkpointing, or better retrieval.",
+        "Humans can understand how the change helps the agent go further with the same budget."
+      ],
+      "file_hints": [
+        "agent/main.py",
+        "agent/checkpoint.py",
+        "agent/prompt.md",
+        "README.md"
+      ]
+    }
+  ]
+}

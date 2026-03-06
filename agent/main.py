@@ -2,15 +2,15 @@
 Crowd Agent — The Evolving Build Loop
 
 This script runs nightly via GitHub Actions. It:
-1. Finds the top-voted issue labeled 'voting'
-2. Announces the build on the issue
+1. Selects the next mutation from crowd proposals, roadmap work, and survival needs
+2. Announces the build on the selected issue
 3. Calls the configured LLM to create a plan
 4. Calls the configured LLM with tool use to implement the plan
 5. Creates a branch and PR with the changes
 6. Reports the result
 
-This file is community-modifiable — the community can vote to change
-how the agent works, what tools it has, and how it makes decisions.
+This file is community-modifiable — the community can influence
+how the agent evolves, what traits it optimizes for, and how it makes decisions.
 """
 
 import json
@@ -62,6 +62,14 @@ logger = logging.getLogger(__name__)
 
 # --- Custom Exceptions ---
 
+MISSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mission.md")
+AUTONOMOUS_ROADMAP_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "autonomous_roadmap.json",
+)
+AUTONOMOUS_TASK_MARKER_PREFIX = "AUTONOMOUS_TASK"
+TRACK_NAMES = ("capability", "reliability", "survival", "legibility", "virality")
+
 class TransientAPIError(Exception):
     """Raised for transient API errors (rate limit, timeout)."""
     pass
@@ -102,6 +110,14 @@ def save_memory(memory: dict):
     with open(memory_path, "w") as f:
         json.dump(memory, f, indent=2)
         f.write("\n")
+
+def load_mission() -> str:
+    with open(MISSION_FILE) as f:
+        return f.read()
+
+def load_autonomous_roadmap() -> dict:
+    with open(AUTONOMOUS_ROADMAP_FILE) as f:
+        return json.load(f)
 
 # --- LLM Provider Abstraction ---
 
@@ -297,58 +313,306 @@ def get_repo(gh: Github):
     name = os.environ.get("REPO_NAME", "crowd-agent")
     return gh.get_repo(f"{owner}/{name}")
 
-def _count_votes(issue, bot_login: str) -> tuple[int, int]:
-    """Count (human_net, total_net) for an issue using thumbs-up and thumbs-down reactions."""
-    reactions = issue.get_reactions()
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+def _normalize_track(value: str) -> str:
+    normalized = (value or "").strip().lower().replace(" ", "-")
+    return normalized if normalized in TRACK_NAMES else ""
+
+def _issue_label_names(issue) -> set[str]:
+    names = set()
+    for label in getattr(issue, "labels", []) or []:
+        name = getattr(label, "name", label)
+        if name:
+            names.add(name)
+    return names
+
+def _parse_issue_form_value(body: str, heading: str) -> str:
+    pattern = rf"^### {re.escape(heading)}\s*$\n(.*?)(?=^\#\#\# |\Z)"
+    match = re.search(pattern, body or "", re.MULTILINE | re.DOTALL)
+    if not match:
+        return ""
+    return match.group(1).strip().splitlines()[0].strip()
+
+def is_track_issue(issue) -> bool:
+    title = (getattr(issue, "title", "") or "").strip().lower()
+    return title.startswith("track:")
+
+def is_mutation_issue(issue) -> bool:
+    if not issue:
+        return False
+    labels = _issue_label_names(issue)
+    title = (issue.title or "").lower()
+    return "mutation" in labels or title.startswith("[mutation]")
+
+def is_autonomous_issue(issue) -> bool:
+    if not issue:
+        return False
+    body = issue.body or ""
+    title = issue.title or ""
+    return (
+        title.lower().startswith("[autonomous]")
+        or f"<!-- {AUTONOMOUS_TASK_MARKER_PREFIX}:" in body
+    )
+
+def _get_autonomous_task_id(issue) -> str:
+    if not issue:
+        return ""
+    body = issue.body or ""
+    match = re.search(rf"<!-- {AUTONOMOUS_TASK_MARKER_PREFIX}:([a-z0-9._-]+) -->", body, re.I)
+    return match.group(1) if match else ""
+
+def _track_for_issue(issue) -> str:
+    if not issue:
+        return ""
+    for label in _issue_label_names(issue):
+        if label.startswith("track:"):
+            return _normalize_track(label.split(":", 1)[1])
+    title_match = re.match(r"^track:\s*(.+)$", issue.title or "", re.I)
+    if title_match:
+        return _normalize_track(title_match.group(1))
+    body = issue.body or ""
+    parsed = _parse_issue_form_value(body, "Target Track")
+    return _normalize_track(parsed)
+
+def _issue_reentry_label(issue) -> str:
+    if is_autonomous_issue(issue):
+        return "autonomous"
+    if "voting" in _issue_label_names(issue):
+        return "voting"
+    return "mutation"
+
+def _net_reactions(issue) -> int:
+    summary = getattr(issue, "reactions", None)
+    if isinstance(summary, dict):
+        return int(summary.get("+1", 0) or 0) - int(summary.get("-1", 0) or 0)
+
     total = 0
-    human = 0
-    for reaction in reactions:
+    for reaction in issue.get_reactions():
         if reaction.content == "+1":
             total += 1
-            if reaction.user and reaction.user.login != bot_login:
-                human += 1
         elif reaction.content == "-1":
             total -= 1
-            if reaction.user and reaction.user.login != bot_login:
-                human -= 1
-    return human, total
+    return total
 
+def _track_pressures(repo) -> dict[str, float]:
+    pressures = {track: 0.5 for track in TRACK_NAMES}
+    for issue in repo.get_issues(state="open"):
+        if getattr(issue, "pull_request", None):
+            continue
+        if not is_track_issue(issue):
+            continue
+        track = _track_for_issue(issue)
+        if not track:
+            continue
+        pressures[track] = _clamp(0.5 + 0.08 * _net_reactions(issue))
+    return pressures
 
-def find_winning_issue(repo, gh: Github):
-    """Find the open issue with the highest net votes labeled 'voting'.
+def _mission_alignment(track: str) -> float:
+    return {
+        "survival": 1.0,
+        "capability": 0.95,
+        "reliability": 0.92,
+        "legibility": 0.82,
+        "virality": 0.75,
+    }.get(track, 0.65)
 
-    Net votes = thumbs-up minus thumbs-down. Human votes always take priority
-    over agent votes. An issue with positive human net votes will beat an issue
-    that only has the agent's vote. Ties are broken by oldest issue first.
-    Always builds something if there are voting issues.
-    """
-    issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
-    issue_list = list(issues)
-    if not issue_list:
-        print("No issues with 'voting' label found. Nothing to build.")
-        return None
+def _issue_effort_fit(issue) -> float:
+    labels = _issue_label_names(issue)
+    if "effort:small" in labels:
+        return 0.95
+    if "effort:medium" in labels:
+        return 0.75
+    if "effort:large" in labels:
+        return 0.45
+    body_length = len(issue.body or "")
+    if body_length < 800:
+        return 0.9
+    if body_length < 2000:
+        return 0.72
+    return 0.52
 
-    # Identify the bot account so we can separate human vs agent votes
-    try:
-        bot_login = gh.get_user().login
-    except Exception:
-        # App installation tokens can't call GET /user; fall back to env or app bot name
-        bot_login = os.environ.get("BOT_LOGIN", "")
+def _roadmap_effort_fit(task: dict) -> float:
+    file_hints = len(task.get("file_hints", []))
+    return _clamp(0.95 - 0.06 * max(0, file_hints - 2), 0.5, 0.95)
 
-    # Score issues: human net votes first, then total net votes, then oldest issue as tiebreaker
-    scored = [(issue, _count_votes(issue, bot_login)) for issue in issue_list]
-    best, (human_net, total_net) = max(scored, key=lambda x: (*x[1], -x[0].created_at.timestamp()))
-    print(f"Winning issue #{best.number}: {best.title} ({human_net} human net, {total_net} total net votes)")
-    return best
+def _candidate_score(priority: float, track_pressure: float, mission_alignment: float, effort_fit: float) -> float:
+    return (
+        0.35 * priority +
+        0.25 * track_pressure +
+        0.25 * mission_alignment +
+        0.15 * effort_fit
+    )
+
+def _build_candidate_pool(repo) -> tuple[list[dict], dict[str, float]]:
+    roadmap = load_autonomous_roadmap()
+    open_task_ids = _get_open_autonomous_task_ids(repo)
+    track_pressures = _track_pressures(repo)
+    candidates: list[dict] = []
+
+    tasks = [task for task in roadmap.get("tasks", []) if task.get("status", "pending") != "done"]
+    max_priority = max((task.get("priority", 1) for task in tasks), default=1)
+    for task in tasks:
+        if task["id"] in open_task_ids:
+            continue
+        track = _normalize_track(task.get("track", ""))
+        priority = _clamp(task.get("priority", 0) / max_priority)
+        track_pressure = track_pressures.get(track, 0.5)
+        mission_alignment = _mission_alignment(track)
+        effort_fit = _roadmap_effort_fit(task)
+        candidates.append({
+            "kind": "roadmap",
+            "title": task["title"],
+            "track": track,
+            "task": task,
+            "roadmap": roadmap,
+            "priority": priority,
+            "track_pressure": track_pressure,
+            "mission_alignment": mission_alignment,
+            "effort_fit": effort_fit,
+            "score": _candidate_score(priority, track_pressure, mission_alignment, effort_fit),
+        })
+
+    crowd_issues = list(repo.get_issues(state="open", labels=["mutation"], sort="updated", direction="desc"))
+    legacy_issues = list(repo.get_issues(state="open", labels=["voting"], sort="updated", direction="desc"))
+    seen_issue_numbers: set[int] = set()
+    for issue in crowd_issues + legacy_issues:
+        if getattr(issue, "pull_request", None) or is_track_issue(issue):
+            continue
+        if issue.number in seen_issue_numbers:
+            continue
+        seen_issue_numbers.add(issue.number)
+
+        track = _track_for_issue(issue)
+        priority = _clamp(0.5 + 0.08 * _net_reactions(issue))
+        labels = _issue_label_names(issue)
+        if "maintainer-seeded" in labels:
+            priority = _clamp(priority + 0.15)
+        if "rejected" in labels:
+            priority = _clamp(priority - 0.2)
+        if "voting" in labels and "mutation" not in labels:
+            priority = _clamp(priority - 0.1)
+        track_pressure = track_pressures.get(track, 0.5)
+        mission_alignment = _mission_alignment(track)
+        effort_fit = _issue_effort_fit(issue)
+        candidates.append({
+            "kind": "issue",
+            "title": issue.title,
+            "track": track,
+            "issue": issue,
+            "priority": priority,
+            "track_pressure": track_pressure,
+            "mission_alignment": mission_alignment,
+            "effort_fit": effort_fit,
+            "score": _candidate_score(priority, track_pressure, mission_alignment, effort_fit),
+        })
+
+    return candidates, track_pressures
+
+def _get_open_autonomous_task_ids(repo) -> set[str]:
+    task_ids: set[str] = set()
+    for issue in repo.get_issues(state="open"):
+        if getattr(issue, "pull_request", None):
+            continue
+        task_id = _get_autonomous_task_id(issue)
+        if task_id:
+            task_ids.add(task_id)
+    return task_ids
+
+def _build_autonomous_issue_body(task: dict, roadmap: dict, selection_note: str = "") -> str:
+    success_criteria = "\n".join(f"- {item}" for item in task.get("success_criteria", []))
+    file_hints = "\n".join(f"- `{item}`" for item in task.get("file_hints", []))
+    next_steps = "\n".join(f"- {item}" for item in task.get("why_now", []))
+    selection_block = ""
+    if selection_note:
+        selection_block = f"## Selection Rationale\n\n{selection_note}\n\n"
+    return (
+        f"<!-- {AUTONOMOUS_TASK_MARKER_PREFIX}:{task['id']} -->\n"
+        "This issue was created automatically because the agent selected this mutation from its roadmap.\n\n"
+        f"## Mission\n\n{roadmap['mission_summary']}\n\n"
+        f"## Autonomous Track\n\n"
+        f"- **Track:** {task['track']}\n"
+        f"- **Priority:** {task['priority']}\n"
+        f"- **Goal:** {task['title']}\n\n"
+        f"{selection_block}"
+        f"## Task\n\n{task['summary']}\n\n"
+        f"## Why This Matters Now\n\n{next_steps}\n\n"
+        f"## Success Criteria\n\n{success_criteria}\n\n"
+        f"## Relevant Files To Inspect\n\n{file_hints}\n\n"
+        "## Required Housekeeping\n\n"
+        f"- Update `agent/autonomous_roadmap.json` to reflect progress on `{task['id']}`.\n"
+        "- If the work changes the long-term direction, update `agent/mission.md` or `README.md`.\n"
+        "- Leave behind a visible artifact that helps humans understand the agent's evolution.\n"
+    )
+
+def create_autonomous_issue(repo, task: dict, roadmap: dict, selection_note: str = ""):
+    """Create an autonomous roadmap issue for a selected roadmap task."""
+    body = _build_autonomous_issue_body(task, roadmap, selection_note=selection_note)
+    issue = repo.create_issue(
+        title=f"[autonomous] {task['title']}",
+        body=body,
+    )
+    for label in ("autonomous", f"track:{task.get('track', '')}"):
+        try:
+            if label and not label.endswith(":"):
+                issue.add_to_labels(label)
+        except Exception:
+            pass
+    print(f"Created autonomous issue #{issue.number}: {task['title']}")
+    return issue
+
+def select_next_issue(repo):
+    """Select the next mutation from crowd proposals and the autonomous roadmap."""
+    candidates, _ = _build_candidate_pool(repo)
+    if not candidates:
+        raise RuntimeError("No mutation candidates are available.")
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (item["score"], item["priority"], item["track_pressure"]),
+        reverse=True,
+    )
+    print("--- Mutation candidate scores ---")
+    for candidate in ranked[:8]:
+        print(
+            f"{candidate['kind']:>7} | {candidate['score']:.3f} | "
+            f"track={candidate['track'] or 'none':<11} | {candidate['title']}"
+        )
+
+    selected = ranked[0]
+    if selected["kind"] == "roadmap":
+        note = (
+            f"This roadmap mutation won the nightly selection score.\n\n"
+            f"- Score: `{selected['score']:.3f}`\n"
+            f"- Track pressure: `{selected['track_pressure']:.2f}`\n"
+            f"- Mission alignment: `{selected['mission_alignment']:.2f}`\n"
+            f"- Effort fit: `{selected['effort_fit']:.2f}`"
+        )
+        return create_autonomous_issue(repo, selected["task"], selected["roadmap"], selection_note=note)
+
+    print(f"Selected mutation issue #{selected['issue'].number}: {selected['title']}")
+    return selected["issue"]
 
 def announce_build(repo, issue):
-    """Comment on the issue and relabel from 'voting' to 'building'."""
-    issue.create_comment("I'm building this now. Watch this space for a PR link.")
-    # Relabel
-    try:
-        issue.remove_from_labels("voting")
-    except Exception:
-        pass
+    """Comment on the issue and relabel it as building."""
+    if is_autonomous_issue(issue):
+        issue.create_comment(
+            "I'm taking this autonomous roadmap mutation now. "
+            "Watch this space for a PR link."
+        )
+    elif is_mutation_issue(issue):
+        issue.create_comment(
+            "I'm taking this mutation proposal now. "
+            "Watch this space for a PR link."
+        )
+    else:
+        issue.create_comment("I'm building this now during the transition to evolution-based selection. Watch this space for a PR link.")
+    if "voting" in _issue_label_names(issue):
+        try:
+            issue.remove_from_labels("voting")
+        except Exception:
+            pass
     issue.add_to_labels("building")
 
 def create_branch_and_pr(repo, issue, changes: dict[str, str], changelog_text: str = "") -> str:
@@ -422,7 +686,14 @@ def report_failure(repo, issue, error: str):
             issue.remove_from_labels("building")
         except Exception:
             pass
-        issue.add_to_labels("voting")
+        reentry_label = _issue_reentry_label(issue)
+        if reentry_label == "autonomous":
+            try:
+                issue.add_to_labels("autonomous")
+            except Exception:
+                pass
+        else:
+            issue.add_to_labels(reentry_label)
     else:
         # No issue context — open a failure issue
         repo.create_issue(
@@ -493,58 +764,6 @@ def write_changelog_entry(config, issue, changes: dict[str, str], success: bool,
 
     with open(changelog_path, "w") as f:
         f.write(new_content)
-
-
-def vote_on_next_issue(repo, config, just_built_number: int):
-    """After a build, the agent reviews the voting pool and votes on what to build next."""
-    issues = repo.get_issues(state="open", labels=["voting"], sort="reactions-+1", direction="desc")
-    issue_list = [i for i in issues if i.number != just_built_number]
-    if not issue_list:
-        print("No other voting issues to vote on.")
-        return
-
-    # Build a summary of the voting pool
-    issue_summaries = []
-    for i in issue_list:
-        reactions = i.get_reactions().totalCount
-        issue_summaries.append(f"- #{i.number}: {i.title} ({reactions} votes)\n  {i.body or '(no description)'}")
-
-    prompt = (
-        "You just finished a build. Now review the remaining issues in the voting pool "
-        "and pick the ONE issue you think should be built next. Consider: feasibility, "
-        "impact on the project, how interesting it would be for the community, and whether "
-        "it builds on recent work.\n\n"
-        "## Voting Pool\n\n" + "\n\n".join(issue_summaries) + "\n\n"
-        "Respond with ONLY a JSON object (no markdown fencing):\n"
-        '{"issue_number": <number>, "reason": "<1-2 sentence explanation>"}'
-    )
-
-    try:
-        text = llm_complete(config, prompt, max_tokens=256, temperature=0)
-        # Strip markdown fencing if the model wraps the JSON
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            text = text.rsplit("```", 1)[0].strip()
-        vote = json.loads(text)
-        chosen_number = vote["issue_number"]
-        reason = vote["reason"]
-
-        # Find the chosen issue and react + comment
-        for i in issue_list:
-            if i.number == chosen_number:
-                i.create_reaction("+1")
-                i.create_comment(
-                    f"**Crowd Agent's vote:** I think this should be built next.\n\n"
-                    f"_{reason}_"
-                )
-                print(f"Voted on issue #{chosen_number}: {reason}")
-                return
-
-        print(f"Agent chose issue #{chosen_number} but it wasn't found in the pool.")
-    except Exception as e:
-        print(f"Warning: Could not vote on next issue: {e}")
-
-
 def run_git(*args):
     """Run a git command in the repo directory."""
     result = subprocess.run(
@@ -562,8 +781,11 @@ def run_git(*args):
 
 def build_prompt(issue, repo_files: list[str]) -> str:
     """Build the user prompt for the agent including issue and repo context."""
+    task_label = "GitHub issue"
+    if is_autonomous_issue(issue):
+        task_label = "autonomous roadmap task"
     parts = [
-        f"## Task\n\nImplement the following GitHub issue:\n\n"
+        f"## Task\n\nImplement the following {task_label}:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n",
         "## Repository Structure\n\n",
     ]
@@ -593,7 +815,7 @@ def create_plan(issue, repo_files: list[str], config: dict) -> str:
     Retries on transient API errors.
     """
     prompt = (
-        f"## Task\n\nCreate a detailed plan for implementing this GitHub issue:\n\n"
+        f"## Task\n\nCreate a detailed plan for implementing this work item:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n"
         f"## Repository Structure\n\n"
     )
@@ -1101,11 +1323,8 @@ def main_fresh():
 
     issue = None
     try:
-        # Step 1: Find the winning issue
-        issue = find_winning_issue(repo, gh)
-        if issue is None:
-            print("No issues to build. Exiting.")
-            return
+        # Step 1: Select the next mutation
+        issue = select_next_issue(repo)
 
         # Step 2: Announce the build
         announce_build(repo, issue)
@@ -1161,12 +1380,6 @@ def main_fresh():
         except Exception as e:
             logger.warning(f"Could not tweet build success: {e}")
 
-        # Step 10: Vote on what to build next
-        try:
-            vote_on_next_issue(repo, config, issue.number)
-        except Exception as e:
-            logger.warning(f"Could not vote on next issue: {e}")
-
         print("Build completed successfully!")
 
     except Exception as e:
@@ -1218,11 +1431,8 @@ def main_fresh_chained():
 
     issue = None
     try:
-        # Step 1: Find the winning issue
-        issue = find_winning_issue(repo, gh)
-        if issue is None:
-            print("No issues to build. Exiting.")
-            return
+        # Step 1: Select the next mutation
+        issue = select_next_issue(repo)
 
         # Step 2: Announce the build
         announce_build(repo, issue)
@@ -1388,7 +1598,7 @@ def main_continuation(checkpoint_branch: str):
 
 
 def _finalize_chain(repo, issue, checkpoint: dict, config: dict):
-    """Complete the chain — remove checkpoint, create PR, report, tweet, vote."""
+    """Complete the chain — remove checkpoint, create PR, and report the result."""
     print("=== Finalizing chained build ===")
 
     files_modified = checkpoint.get("files_modified", [])
@@ -1431,12 +1641,6 @@ def _finalize_chain(repo, issue, checkpoint: dict, config: dict):
         tweet_build_success(issue.title, pr_url, dry_run=dry_run)
     except Exception as e:
         logger.warning(f"Could not tweet build success: {e}")
-
-    # Vote on next issue
-    try:
-        vote_on_next_issue(repo, config, issue.number)
-    except Exception as e:
-        logger.warning(f"Could not vote on next issue: {e}")
 
     print("Chained build completed successfully!")
 

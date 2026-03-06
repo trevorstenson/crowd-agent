@@ -1,0 +1,57 @@
+name: Mutation Proposal
+description: Suggest a compounding change to how the organism should evolve.
+title: "[mutation] "
+labels:
+  - mutation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mutation proposals are not generic feature requests.
+
+        Propose a change that helps the organism become better at something over time.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Mutation Summary
+      description: What should change?
+      placeholder: Add a review pass before opening PRs.
+    validations:
+      required: true
+  - type: dropdown
+    id: target-track
+    attributes:
+      label: Target Track
+      description: Which trait should this mutation primarily improve?
+      options:
+        - Capability
+        - Reliability
+        - Survival
+        - Legibility
+        - Virality
+    validations:
+      required: true
+  - type: textarea
+    id: compounding-value
+    attributes:
+      label: Why This Compounds
+      description: Why does this make future runs better, not just this run?
+      placeholder: It improves the agent's ability to detect low-quality patches before they land.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraint or Pressure
+      description: What bottleneck, pressure, or weakness does this mutation address?
+      placeholder: Slow inference, poor retrieval, weak observability, low public legibility...
+    validations:
+      required: false
+  - type: textarea
+    id: file-hints
+    attributes:
+      label: File Hints
+      description: Optional pointers to files or areas of the repo.
+      placeholder: agent/main.py, dashboard/, agent/prompt.md
+    validations:
+      required: false

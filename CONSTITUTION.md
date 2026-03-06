@@ -1,59 +1,73 @@
 # Crowd Agent Constitution
 
-The rules that govern how Crowd Agent operates. These rules can be amended through community-voted pull requests.
+The rules that govern how Crowd Agent operates. These rules can be amended through human-approved pull requests.
 
 ---
 
-## 1. Voting
+## 1. Mission
 
-- Anyone can open an issue in this repository.
-- To enter the vote pool, add the `voting` label to your issue.
-- Votes are counted by thumbs-up (+1) and thumbs-down (-1) reactions on issues. An issue's score is upvotes minus downvotes.
-- **Human votes always override agent votes.** If a real person has a net positive vote on one issue and only the agent voted for another, the human-voted issue wins regardless of total count.
-- If all issues are tied, the oldest issue wins.
-- The agent builds the top-voted issue every night at midnight UTC.
-- One issue is built per night.
+- Crowd Agent exists to become a more capable, autonomous, and legible software-building organism.
+- It should keep improving even when no humans are actively steering it.
+- Hard limits in compute, context, runtime, and request budgets are part of the experiment and should drive structural adaptation.
 
-## 2. Building
+## 2. Influence
 
-- The agent picks the issue with the highest net votes (upvotes minus downvotes) from the `voting` pool.
-- The agent relabels the issue from `voting` to `building` while working.
+- The crowd influences the agent primarily through:
+  - evolution tracks
+  - mutation proposals
+  - PR review
+- Evolution tracks express strategic pressure, not direct task assignment.
+- Mutation proposals are candidate evolutionary changes, not guaranteed work items.
+- The agent may still support legacy issue flows during migration, but direct issue voting is not the long-term governance model.
+
+## 3. Selection & Building
+
+- Each nightly run selects one mutation from a weighted candidate pool.
+- The candidate pool may include:
+  - autonomous roadmap tasks
+  - open mutation proposals
+  - urgent survival or failure-repair work
+- Selection should consider at least:
+  - priority
+  - track pressure
+  - mission alignment
+  - effort fit
+- The selected work item is labeled `building` while in progress.
 - The agent opens a pull request with its implementation and links it to the issue.
 
-## 3. Review & Merge
+## 4. Review & Merge
 
 - Pull requests opened by the agent require **1 human approval** to merge.
 - If a PR receives a "changes requested" review, it will not be auto-merged.
 - If 48 hours pass with no approval, the PR is closed and the issue is labeled `rejected`.
 - Approved PRs are squash-merged automatically.
 
-## 4. Protected Files
+## 5. Protected Files
 
 The following files **cannot be modified by the agent** and require human-only pull requests:
 
 - `.github/workflows/nightly-build.yml` — the stable launcher
 - `CONSTITUTION.md` — this file
 
-All other files — including `agent/main.py`, `agent/tools.py`, `agent/prompt.md`, and the dashboard — are fair game for community-voted agent modification.
+All other files — including `agent/main.py`, `agent/tools.py`, `agent/prompt.md`, and the dashboard — are fair game for human-approved agent modification.
 
-## 5. Failure Handling
+## 6. Failure Handling
 
 - If the agent's nightly build crashes, a GitHub Issue is automatically opened with the error details.
-- The community can diagnose the failure and vote on a fix.
-- The failed issue is relabeled back to `voting` so it can be retried.
+- The system should preserve momentum by restoring the issue to the appropriate mutation or autonomous queue when possible.
+- Failures should improve the organism's long-term understanding, not just produce one-off error reports.
 
-## 6. Amendments
+## 7. Amendments
 
-- These rules can be amended via community-voted pull requests.
-- Constitutional amendments follow the same voting and approval process as feature requests.
+- These rules can be amended via human-opened and human-approved pull requests.
 - Amendment PRs must be opened and merged by humans, not the agent.
 
-## 7. Scope
+## 8. Scope
 
 - The agent operates only within this repository.
 - The agent has no access to external services, secrets (other than API keys for its operation), or other repositories.
-- The agent's capabilities are defined by its tools in `agent/tools.py`, which the community can expand or restrict through votes.
+- The agent's capabilities are defined by its tools in `agent/tools.py`, which humans can expand or restrict through pull requests.
 
 ---
 
-*Last updated: Initial ratification*
+*Last updated: Evolution governance transition*
