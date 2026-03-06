@@ -1,11 +1,13 @@
 """
-Checkpoint management for workflow chaining.
+Checkpoint management for workflow chaining and survival mechanisms.
 
 Splits the agent loop across multiple GitHub Actions workflow runs,
 one turn per run. Each run checkpoints its progress, commits it to
 the agent branch, and triggers the next run. Context stays small and
 flat (~2.5K tokens) instead of growing unboundedly.
-"""
+
+Also supports survival checkpointing for constraint management.
+""""
 
 import json
 import os
@@ -13,6 +15,7 @@ import subprocess
 from datetime import datetime, timezone
 
 CHECKPOINT_FILE = ".agent-checkpoint.json"
+SURVIVAL_CHECKPOINT_FILE = ".agent-survival-checkpoint.json"
 
 REPO_DIR = os.environ.get(
     "GITHUB_WORKSPACE",
