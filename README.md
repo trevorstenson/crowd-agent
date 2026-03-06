@@ -6,6 +6,38 @@ Every night at midnight UTC, Crowd Agent reads the top-voted GitHub Issue, imple
 
 The agent modifies itself.
 
+## Project Structure
+
+```
+crowd-agent/
+├── .github/
+│   └── workflows/
+│       ├── auto-merge.yml
+│       ├── deploy.yml
+│       ├── label-voting.yml
+│       ├── nightly-build-dynamic.yml
+│       ├── nightly-build-local.yml
+│       ├── nightly-build-parallel.yml
+│       └── nightly-build.yml
+├── agent/
+│   ├── checkpoint.py
+│   ├── config.json
+│   ├── main.py
+│   ├── memory.json
+│   ├── prompt.md
+│   ├── tools.py
+│   └── twitter.py
+├── dashboard/
+│   ├── app.js
+│   ├── favicon.ico
+│   ├── index.html
+│   └── style.css
+├── CHANGELOG.md
+├── CONSTITUTION.md
+├── README.md
+└── requirements.txt
+```
+
 ## How It Works
 
 1. **Vote** — Browse [open issues](https://github.com/trevorstenson/crowd-agent/issues?q=is%3Aissue+is%3Aopen+label%3Avoting) and thumbs-up the ones you want built
