@@ -193,7 +193,7 @@ def search_files(pattern: str, case_sensitive: bool = False, max_results: int = 
     })
 
 
-# Tool definitions for the Claude API
+# Tool definitions for the agent API
 TOOL_DEFINITIONS = [
     {
         "name": "read_file",

@@ -4,8 +4,8 @@ Crowd Agent — The Evolving Build Loop
 This script runs nightly via GitHub Actions. It:
 1. Finds the top-voted issue labeled 'voting'
 2. Announces the build on the issue
-3. Calls the Claude API to create a plan
-4. Calls the Claude API with tool use to implement the plan
+3. Calls the configured LLM to create a plan
+4. Calls the configured LLM with tool use to implement the plan
 5. Creates a branch and PR with the changes
 6. Reports the result
 
@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Optional
 
-import anthropic
+import openai
 from github import Auth, Github
 from tenacity import (
     retry,
@@ -106,12 +106,43 @@ def save_memory(memory: dict):
 # --- LLM Provider Abstraction ---
 
 def get_llm_provider() -> str:
-    return os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    return os.environ.get("LLM_PROVIDER", "groq").lower()
 
 def get_model_name(config: dict) -> str:
     if get_llm_provider() == "ollama":
         return os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
+    if get_llm_provider() == "groq":
+        return os.environ.get("GROQ_MODEL", config["model"])
     return config["model"]
+
+def get_openai_base_url() -> str:
+    if get_llm_provider() == "ollama":
+        return "http://localhost:11434/v1"
+    if get_llm_provider() == "groq":
+        return "https://api.groq.com/openai/v1"
+    raise RuntimeError(f"Unsupported OpenAI-compatible provider: {get_llm_provider()}")
+
+def get_openai_api_key() -> str:
+    if get_llm_provider() == "ollama":
+        return "ollama"
+    if get_llm_provider() == "groq":
+        api_key = os.environ.get("GROQ_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY is not set.")
+        return api_key
+    raise RuntimeError(f"Unsupported OpenAI-compatible provider: {get_llm_provider()}")
+
+def get_openai_timeout() -> float:
+    if get_llm_provider() == "ollama":
+        return 1800.0  # 30 min — CPU inference is slow
+    return 300.0
+
+def make_openai_client() -> openai.OpenAI:
+    return openai.OpenAI(
+        base_url=get_openai_base_url(),
+        api_key=get_openai_api_key(),
+        timeout=get_openai_timeout(),
+    )
 
 def get_agent_loop_timeout(config: dict) -> int:
     env_timeout = os.environ.get("AGENT_LOOP_TIMEOUT")
@@ -123,34 +154,21 @@ def get_agent_loop_timeout(config: dict) -> int:
     return default
 
 def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
-    """Simple LLM text completion. Works with both Anthropic and Ollama."""
+    """Simple LLM text completion for the configured provider."""
     model = get_model_name(config)
-    if get_llm_provider() == "ollama":
-        import openai
-        client = openai.OpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="ollama",  # required by client but unused by Ollama
-            timeout=1800.0,  # 30 min — CPU inference is slow
-        )
+    if get_llm_provider() in {"ollama", "groq"}:
+        client = make_openai_client()
         response = client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content.strip()
-    else:
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text.strip()
+        return (response.choices[0].message.content or "").strip()
+    raise RuntimeError(f"Unsupported LLM provider: {get_llm_provider()}")
 
 def _tools_to_openai_format(tools: list[dict]) -> list[dict]:
-    """Convert Anthropic tool definitions to OpenAI function calling format."""
+    """Convert internal tool definitions to OpenAI function calling format."""
     return [
         {
             "type": "function",
@@ -188,7 +206,7 @@ def classify_api_error(exception: Exception) -> str:
 # --- Retry Decorators ---
 
 def retry_on_transient_api_error(func):
-    """Decorator to retry Claude API calls on transient failures with exponential backoff."""
+    """Decorator to retry LLM API calls on transient failures with exponential backoff."""
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=1, max=30),
@@ -600,16 +618,18 @@ def create_plan(issue, repo_files: list[str], config: dict) -> str:
 def run_agent(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
     """Run the agent loop with tools until done. Returns file changes.
 
-    Dispatches to the appropriate provider (Anthropic or Ollama).
+    Dispatches to the appropriate provider.
     """
     if get_llm_provider() == "ollama":
         return _run_agent_ollama(issue, repo_files, config, system_prompt, plan)
-    return _run_agent_anthropic(issue, repo_files, config, system_prompt, plan)
+    if get_llm_provider() == "groq":
+        return _run_agent_groq(issue, repo_files, config, system_prompt, plan)
+    raise RuntimeError(f"Unsupported LLM provider: {get_llm_provider()}")
 
-def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
-    """Run the agent loop using the Anthropic API."""
+def _run_agent_groq(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
+    """Run the agent loop using Groq's OpenAI-compatible API and tool calling."""
     reset_file_changes()
-    client = anthropic.Anthropic()
+    client = make_openai_client()
     timeout_seconds = get_agent_loop_timeout(config)
 
     prompt_text = build_prompt(issue, repo_files)
@@ -618,8 +638,10 @@ def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prom
         f"Follow this plan to guide your implementation:\n\n{plan}"
     )
 
+    tools = _tools_to_openai_format(TOOL_DEFINITIONS)
     messages = [
-        {"role": "user", "content": prompt_text}
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt_text},
     ]
 
     with TimeoutHandler(timeout_seconds) as timeout_handler:
@@ -628,49 +650,59 @@ def _run_agent_anthropic(issue, repo_files: list[str], config: dict, system_prom
             print(f"--- Agent turn {turn + 1}/{config['max_turns']} ---")
 
             try:
-                response = client.messages.create(
+                response = client.chat.completions.create(
                     model=get_model_name(config),
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
-                    system=system_prompt,
                     messages=messages,
-                    tools=TOOL_DEFINITIONS,
+                    tools=tools,
                 )
-            except anthropic.RateLimitError as e:
-                logger.warning(f"Rate limit error on turn {turn + 1}, retrying: {e}")
+            except Exception as e:
+                logger.warning(f"API error on turn {turn + 1}, retrying: {e}")
                 time.sleep(2)
                 continue
-            except anthropic.APITimeoutError as e:
-                logger.warning(f"API timeout on turn {turn + 1}, retrying: {e}")
-                time.sleep(2)
-                continue
-            except anthropic.APIError as e:
-                logger.error(f"API error on turn {turn + 1}: {e}")
-                raise
 
-            assistant_content = response.content
-            messages.append({"role": "assistant", "content": assistant_content})
+            message = response.choices[0].message
+            tool_calls = list(message.tool_calls or [])
+            assistant_message = {"role": "assistant", "content": message.content or ""}
+            if tool_calls:
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    for tool_call in tool_calls
+                ]
+            messages.append(assistant_message)
 
-            if response.stop_reason == "end_turn":
-                for block in assistant_content:
-                    if hasattr(block, "text"):
-                        print(f"Agent summary: {block.text[:200]}...")
+            if not tool_calls:
+                print(f"Agent summary: {(message.content or '')[:200]}...")
                 break
 
-            tool_results = []
-            for block in assistant_content:
-                if block.type == "tool_use":
-                    print(f"  Tool call: {block.name}({json.dumps(block.input)[:100]})")
-                    result = execute_tool_safely(block.name, block.input)
-                    print(f"  Result: {result[:100]}...")
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+            for tool_call in tool_calls:
+                raw_args = tool_call.function.arguments or "{}"
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    args = {}
+                    logger.warning(
+                        "Invalid tool call arguments for %s: %s",
+                        tool_call.function.name,
+                        raw_args[:200],
+                    )
+                print(f"  Tool call: {tool_call.function.name}({json.dumps(args)[:100]})")
+                result = execute_tool_safely(tool_call.function.name, args)
+                print(f"  Result: {result[:100]}...")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "content": result,
+                })
         else:
             logger.warning("Agent reached max turns without finishing.")
 
@@ -810,14 +842,8 @@ def _build_tool_prompt() -> str:
 
 def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt: str, plan: str) -> dict[str, str]:
     """Run the agent loop using Ollama with structured JSON tool calls parsed from text."""
-    import openai
-
     reset_file_changes()
-    client = openai.OpenAI(
-        base_url="http://localhost:11434/v1",
-        api_key="ollama",
-        timeout=1800.0,  # 30 min — CPU inference is slow for large outputs
-    )
+    client = make_openai_client()
     model = get_model_name(config)
     timeout_seconds = get_agent_loop_timeout(config)
 
@@ -904,13 +930,7 @@ def run_chained_turns(checkpoint: dict, config: dict, system_prompt: str) -> dic
 
     Returns the updated checkpoint dict.
     """
-    import openai
-
-    client = openai.OpenAI(
-        base_url="http://localhost:11434/v1",
-        api_key="ollama",
-        timeout=1800.0,
-    )
+    client = make_openai_client()
     model = checkpoint.get("model", get_model_name(config))
 
     for step in range(TURNS_PER_WORKFLOW):
@@ -1066,7 +1086,7 @@ def main():
 def main_fresh():
     """Original behavior — full agent loop in a single workflow run.
 
-    Used for the Anthropic path and non-chained Ollama path.
+    Used for the Groq path and non-chained Ollama path.
     """
     print("=== Crowd Agent Nightly Build ===")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
@@ -1112,7 +1132,7 @@ def main_fresh():
         except RetryError as e:
             raise RuntimeError(f"Failed to create plan after max retries: {e}")
 
-        # Step 5-6: Run the agent loop with the plan (calls Claude, executes tools)
+        # Step 5-6: Run the agent loop with the plan
         try:
             changes = run_agent(issue, repo_files, config, system_prompt, plan)
         except AgentLoopTimeout as e:

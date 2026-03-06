@@ -2,7 +2,7 @@
 
 **An AI coding agent governed by the crowd.**
 
-Every night at midnight UTC, Crowd Agent reads the top-voted GitHub Issue, implements it using Claude, and opens a pull request. The twist: the agent's own source code is part of the repo — so the community can vote to change how the agent thinks, what tools it has, and how it behaves.
+Every night at midnight UTC, Crowd Agent reads the top-voted GitHub Issue, implements it using Groq-hosted open models, and opens a pull request. The twist: the agent's own source code is part of the repo — so the community can vote to change how the agent thinks, what tools it has, and how it behaves.
 
 The agent modifies itself.
 
@@ -22,9 +22,9 @@ The agent modifies itself.
 
 ## The Agent
 
-The agent is a ~200-line Python script ([`agent/main.py`](agent/main.py)) that:
+The agent is a Python script ([`agent/main.py`](agent/main.py)) that:
 - Finds the winning issue via the GitHub API
-- Calls the Claude API with tool use to implement the feature
+- Calls Groq's OpenAI-compatible API with tool use to implement the feature
 - Creates a branch and pull request with the changes
 
 Its tools, personality, and behavior are all defined in editable files that the community controls.
@@ -69,7 +69,7 @@ Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevor
 
 ## Stack
 
-- **Agent:** Python, Claude Sonnet 4.5 API, PyGithub
+- **Agent:** Python, Groq API, PyGithub
 - **Dashboard:** Vanilla HTML/CSS/JS, GitHub Pages
 - **CI/CD:** GitHub Actions (nightly build, auto-merge, deploy)
 
