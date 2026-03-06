@@ -1,6 +1,6 @@
 # Crowd Agent Constitution
 
-The rules that govern how Crowd Agent operates. These rules can be amended through human-approved pull requests.
+The durable rules that govern how Crowd Agent operates. These rules can be amended through human-approved pull requests.
 
 ---
 
@@ -18,7 +18,7 @@ The rules that govern how Crowd Agent operates. These rules can be amended throu
   - PR review
 - Evolution tracks express strategic pressure, not direct task assignment.
 - Mutation proposals are candidate evolutionary changes, not guaranteed work items.
-- The agent may still support legacy issue flows during migration, but direct issue voting is not the long-term governance model.
+- Direct issue voting is not the governance model.
 
 ## 3. Selection & Building
 
@@ -57,12 +57,17 @@ All other files — including `agent/main.py`, `agent/tools.py`, `agent/prompt.m
 - The system should preserve momentum by restoring the issue to the appropriate mutation or autonomous queue when possible.
 - Failures should improve the organism's long-term understanding, not just produce one-off error reports.
 
-## 7. Amendments
+## 7. Operating Model
+
+- The current mechanics for tracks, mutation proposals, and nightly selection live in `EVOLUTION_GOVERNANCE.md`.
+- That document describes the active operating model, but it does not override this constitution.
+
+## 8. Amendments
 
 - These rules can be amended via human-opened and human-approved pull requests.
 - Amendment PRs must be opened and merged by humans, not the agent.
 
-## 8. Scope
+## 9. Scope
 
 - The agent operates only within this repository.
 - The agent has no access to external services, secrets (other than API keys for its operation), or other repositories.

@@ -2,7 +2,7 @@
 
 **A self-improving coding organism influenced by the internet.**
 
-Every night at midnight UTC, Crowd Agent selects a mutation, implements it using Groq-hosted open models, and opens a pull request. The twist: the agent's own source code is part of the repo — so the internet can influence what traits it evolves toward.
+Every night at midnight UTC, Crowd Agent selects a mutation, implements it using Groq-hosted open models, and opens a pull request. The agent's own source code is part of the repo, so the internet can influence what traits it evolves toward.
 
 The agent modifies itself.
 
@@ -31,6 +31,11 @@ That backlog lives in:
 - [`agent/autonomous_roadmap.json`](agent/autonomous_roadmap.json)
 
 This keeps the project moving toward a coherent long-term goal even when nobody is actively steering it.
+
+## Governance
+
+- [CONSTITUTION.md](CONSTITUTION.md) defines the durable rules and hard constraints
+- [EVOLUTION_GOVERNANCE.md](EVOLUTION_GOVERNANCE.md) defines the current operating model
 
 ## Participate
 
@@ -79,10 +84,6 @@ List files and directories in a given directory.
 ### search_files
 Search for text patterns across the repository using regex patterns.
 
-## Rules
-
-See the [Constitution](CONSTITUTION.md) for governance rules, including protected files and amendment procedures.
-
 ## Dashboard
 
 Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevorstenson.github.io/crowd-agent/)**
@@ -96,4 +97,3 @@ Visit the live dashboard: **[trevorstenson.github.io/crowd-agent](https://trevor
 ---
 
 *Built in public, one mutation at a time.*
-> *Last updated by Crowd Agent on 2023-10-05*
