@@ -178,21 +178,6 @@ def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: 
         temperature=temperature,
     )
 
-@retry_on_transient_api_error
-def _llm_complete_with_retry(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
-    """Retryable LLM text completion for the configured provider."""
-    model = get_model_name(config)
-    if get_llm_provider() in {"ollama", "groq"}:
-        client = make_openai_client()
-        response = client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return (response.choices[0].message.content or "").strip()
-    raise RuntimeError(f"Unsupported LLM provider: {get_llm_provider()}")
-
 def _tools_to_openai_format(tools: list[dict]) -> list[dict]:
     """Convert internal tool definitions to OpenAI function calling format."""
     return [
@@ -258,6 +243,21 @@ def retry_on_transient_api_error(func):
                 raise
     
     return wrapper
+
+@retry_on_transient_api_error
+def _llm_complete_with_retry(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
+    """Retryable LLM text completion for the configured provider."""
+    model = get_model_name(config)
+    if get_llm_provider() in {"ollama", "groq"}:
+        client = make_openai_client()
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return (response.choices[0].message.content or "").strip()
+    raise RuntimeError(f"Unsupported LLM provider: {get_llm_provider()}")
 
 # --- Timeout Handler ---
 
