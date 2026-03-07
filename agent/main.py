@@ -52,7 +52,21 @@ from checkpoint import (
 )
 from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
 
-# --- Logging Setup ---
+# Import failure taxonomy
+from failure_taxonomy import FailureTaxonomy, format_failure_summary
+
+# --- Global Failure Tracker ---
+
+global_failure_tracker = None
+
+def get_failure_tracker(config: dict) -> Optional[FailureTaxonomy]:
+    """Get or create the global failure tracker."""
+    global global_failure_tracker
+    if global_failure_tracker is None:
+        failure_config = config.get("failure_tracking", {})
+        if failure_config.get("enabled", True):
+            global_failure_tracker = FailureTaxonomy(failure_config)
+    return global_failure_tracker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -295,6 +309,8 @@ def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
     Returns:
         Tool result as string (errors are formatted as error messages)
     """
+    # Get the global failure tracker if available
+    failure_tracker = globals().get('global_failure_tracker')
     try:
         logger.info(f"Executing tool: {tool_name} with input: {json.dumps(tool_input)[:100]}")
         result = execute_tool(tool_name, tool_input)
@@ -302,6 +318,12 @@ def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
         # Check if result is an error message
         if isinstance(result, str) and result.startswith("Error"):
             logger.warning(f"Tool {tool_name} returned error: {result}")
+            if failure_tracker:
+                failure_tracker.record_failure(
+                    category_code='TOOL_EXECUTION',
+                    details=f"Tool {tool_name} returned error: {result}",
+                    context={'tool': tool_name, 'input': tool_input}
+                )
         else:
             logger.info(f"Tool {tool_name} executed successfully")
         
@@ -310,6 +332,12 @@ def execute_tool_safely(tool_name: str, tool_input: dict) -> str:
     except Exception as e:
         error_msg = f"Error executing {tool_name}: {e}"
         logger.error(error_msg, exc_info=True)
+        if failure_tracker:
+            failure_tracker.record_failure(
+                category_code='TOOL_EXECUTION',
+                details=error_msg,
+                context={'tool': tool_name, 'input': tool_input, 'error_type': type(e).__name__}
+            )
         return error_msg
 
 # --- GitHub Helpers ---
@@ -1424,6 +1452,11 @@ def main_fresh():
     print(f"LLM Provider: {get_llm_provider()}, Model: {get_model_name(config)}")
     system_prompt = load_system_prompt()
     memory = load_memory()
+
+    # Initialize failure tracking
+    failure_tracker = get_failure_tracker(config)
+    if failure_tracker:
+        print(f"Failure tracking enabled: {format_failure_summary(failure_tracker)}")
 
     gh = get_github()
     repo = get_repo(gh)
