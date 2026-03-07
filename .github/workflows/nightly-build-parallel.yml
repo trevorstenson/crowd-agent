@@ -1,8 +1,9 @@
 name: Nightly Build (Parallel Local LLM)
 
 on:
-  schedule:
-    - cron: '0 1 * * *'  # 01:00 UTC
+  # schedule disabled — keep this workflow manual until the evolution model stabilizes
+  # schedule:
+  #   - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       planner_model:

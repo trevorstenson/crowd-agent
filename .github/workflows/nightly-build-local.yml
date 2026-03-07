@@ -1,8 +1,9 @@
 name: Nightly Build (Local LLM)
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Midnight UTC
+  # schedule disabled — Groq-based Nightly Build is now the primary automatic run
+  # schedule:
+  #   - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
       model:
