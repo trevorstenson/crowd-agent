@@ -13,5 +13,12 @@
   },
   "chaining": {
     "max_chain_depth": 15
+  },
+  "failure_tracking": {
+    "enabled": true,
+    "auto_categorize": true,
+    "report_frequency": "run",
+    "persist_failures": true,
+    "max_stored_failures": 1000
   }
 }
