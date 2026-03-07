@@ -51,6 +51,7 @@ from checkpoint import (
     remove_checkpoint,
 )
 from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
+from track_decay import weighted_net_reactions
 
 # --- Logging Setup ---
 
@@ -432,7 +433,12 @@ def _track_pressures(repo) -> dict[str, float]:
         track = _track_for_issue(issue)
         if not track:
             continue
-        pressures[track] = _clamp(0.5 + 0.08 * _net_reactions(issue))
+        try:
+            score = weighted_net_reactions(issue.get_reactions())
+        except Exception as e:
+            logger.warning(f"Could not load decayed reactions for track issue #{issue.number}: {e}")
+            score = float(_net_reactions(issue))
+        pressures[track] = _clamp(0.5 + 0.08 * score)
     return pressures
 
 def _mission_alignment(track: str) -> float:

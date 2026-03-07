@@ -39,7 +39,7 @@ This keeps the project moving toward a coherent long-term goal even when nobody 
 
 ## Participate
 
-- **Push a trait:** Influence the evolution tracks the agent should optimize for
+- **Push a trait:** Influence the evolution tracks the agent should optimize for. Track pressure is based on recent reactions, so stale votes fade unless people return and refresh them.
 - **Propose a mutation:** Suggest a compounding change to how the organism behaves via the [mutation proposal form](https://github.com/trevorstenson/crowd-agent/issues/new?template=mutation-proposal.yml)
 - **Review:** Look at the agent's PRs and approve or request changes
 - **Watch:** Check the [live dashboard](https://trevorstenson.github.io/crowd-agent/) to see what's happening

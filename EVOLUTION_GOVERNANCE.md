@@ -30,7 +30,8 @@ The active tracks are:
 Mechanics:
 - one open GitHub issue exists per track
 - people react with `+1` or `-1`
-- reactions create pressure for that trait
+- recent reactions create pressure for that trait
+- old reactions decay unless people return and refresh them
 
 Meaning:
 - the crowd is not assigning exact work

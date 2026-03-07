@@ -9,8 +9,12 @@ const TRACKS = [
   'Virality',
 ];
 
-async function fetchJSON(url) {
-  const res = await fetch(url);
+async function fetchJSON(url, options = {}) {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    ...(options.headers || {}),
+  };
+  const res = await fetch(url, { ...options, headers });
   if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
   return res.json();
 }
@@ -30,6 +34,22 @@ function escapeHtml(text) {
 
 function netReactions(issue) {
   return (issue.reactions?.['+1'] || 0) - (issue.reactions?.['-1'] || 0);
+}
+
+function reactionWeight(createdAt) {
+  const ageMinutes = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / 60000);
+  if (ageMinutes < 5) return 1.0;
+  if (ageMinutes < 10) return 0.5;
+  if (ageMinutes < 15) return 0.2;
+  return 0.0;
+}
+
+function decayedNetReactions(reactions) {
+  return (reactions || []).reduce((total, reaction) => {
+    if (reaction.content !== '+1' && reaction.content !== '-1') return total;
+    const sign = reaction.content === '+1' ? 1 : -1;
+    return total + sign * reactionWeight(reaction.created_at);
+  }, 0);
 }
 
 function shortDate(iso) {
@@ -148,7 +168,7 @@ async function loadCurrentMutation() {
   }
 }
 
-function pressureCard(track, issue) {
+function pressureCard(track, issue, reactions = []) {
   const card = document.createElement('article');
   card.className = 'pressure-card';
 
@@ -164,9 +184,11 @@ function pressureCard(track, issue) {
     return card;
   }
 
-  const score = netReactions(issue);
-  const normalized = Math.max(0, Math.min(100, 50 + score * 10));
-  const scoreLabel = score > 0 ? `+${score}` : `${score}`;
+  const decayedScore = decayedNetReactions(reactions);
+  const rawScore = netReactions(issue);
+  const normalized = Math.max(0, Math.min(100, 50 + decayedScore * 10));
+  const scoreLabel = decayedScore > 0 ? `+${decayedScore.toFixed(1)}` : decayedScore.toFixed(1);
+  const rawLabel = rawScore > 0 ? `+${rawScore}` : `${rawScore}`;
 
   card.innerHTML = `
     <div class="pressure-top">
@@ -174,6 +196,7 @@ function pressureCard(track, issue) {
       <a class="pressure-score" href="${issue.html_url}" target="_blank">${scoreLabel}</a>
     </div>
     <p class="pressure-note">${truncate(issue.body || 'Track issue is live and collecting pressure.', 120)}</p>
+    <p class="pressure-note">Live pressure is time-decayed. Refresh your reaction to keep steering this trait. All-time net: ${rawLabel}</p>
     <div class="pressure-bar"><span style="width: ${normalized}%"></span></div>
   `;
   return card;
@@ -192,9 +215,30 @@ async function loadTrackPressures() {
       }
     }
 
+    const reactionsByTrack = new Map();
+    await Promise.all(
+      TRACKS.map(async (track) => {
+        const issue = trackIssues.get(track.toLowerCase());
+        if (!issue) return;
+        try {
+          const reactions = await fetchJSON(`${API}/repos/${REPO}/issues/${issue.number}/reactions?per_page=100`);
+          reactionsByTrack.set(track.toLowerCase(), reactions);
+        } catch (error) {
+          console.warn(`Could not load reactions for ${track}:`, error);
+          reactionsByTrack.set(track.toLowerCase(), []);
+        }
+      })
+    );
+
     container.innerHTML = '';
     for (const track of TRACKS) {
-      container.appendChild(pressureCard(track, trackIssues.get(track.toLowerCase())));
+      container.appendChild(
+        pressureCard(
+          track,
+          trackIssues.get(track.toLowerCase()),
+          reactionsByTrack.get(track.toLowerCase()) || []
+        )
+      );
     }
   } catch (error) {
     console.warn('Could not load track pressures:', error);
