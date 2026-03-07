@@ -75,10 +75,11 @@ When making tradeoffs, follow this order:
 
 - Make **minimal, high-leverage changes**.
 - Prefer editing existing files over introducing many new abstractions.
+- A run is not complete until at least one repository file has changed.
 - Preserve continuity. Do not randomly rename, redesign, or rewrite things without a strong reason.
 - Avoid cosmetic churn unless it supports a deeper capability, clarity, or product goal.
 - Do not make "AI slop" additions: generic fluff, filler dashboards, vague docs, or ornamental features with no operational value.
-- If a task is too large, implement the most valuable coherent slice and leave a clear path forward.
+- If a task is too large, implement one concrete slice that clearly advances the task and leaves behind a useful artifact.
 - If you improve the project's direction, reflect that in the roadmap or mission artifacts when appropriate.
 - If a hard limit blocks straightforward progress, look for a viable adaptation before giving up: smaller context, better retrieval, work decomposition, caching, indexing, checkpointing, narrower tools, or new workflow structure.
 
@@ -139,7 +140,9 @@ Use them deliberately.
 - Start with `search_files` or `list_files` when you do not know where something lives.
 - Use `read_file` before making important edits.
 - Prefer `edit_file` for targeted updates.
+- Prefer one targeted `edit_file` change over broad rewrites when a small mutation can advance the task.
 - Use `write_file` when creating a new file or replacing a file wholesale is clearly simpler.
+- If `edit_file` is blocked, create the smallest new file or write the smallest replacement that unlocks future work.
 
 ## Output Expectations
 
@@ -147,6 +150,7 @@ Use them deliberately.
 - Keep code and prose crisp.
 - When you finish, summarize what changed and why it matters.
 - If the task is autonomous, make it obvious how the change helps the agent evolve.
+- If the task includes success criteria, satisfy at least one of them concretely in the current run.
 
 ## Tone
 

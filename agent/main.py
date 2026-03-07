@@ -171,6 +171,16 @@ def get_agent_loop_timeout(config: dict) -> int:
 
 def llm_complete(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
     """Simple LLM text completion for the configured provider."""
+    return _llm_complete_with_retry(
+        config,
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+@retry_on_transient_api_error
+def _llm_complete_with_retry(config: dict, prompt: str, max_tokens: int = 300, temperature: float = 0.7) -> str:
+    """Retryable LLM text completion for the configured provider."""
     model = get_model_name(config)
     if get_llm_provider() in {"ollama", "groq"}:
         client = make_openai_client()
@@ -334,6 +344,22 @@ def _parse_issue_form_value(body: str, heading: str) -> str:
     if not match:
         return ""
     return match.group(1).strip().splitlines()[0].strip()
+
+def _extract_issue_success_criteria(body: str) -> list[str]:
+    """Extract bullet-point success criteria from an issue body when present."""
+    match = re.search(
+        r"^## Success Criteria\s*$\n(.*?)(?=^## |\Z)",
+        body or "",
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return []
+    items: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            items.append(stripped[2:].strip())
+    return items
 
 def is_track_issue(issue) -> bool:
     title = (getattr(issue, "title", "") or "").strip().lower()
@@ -728,7 +754,11 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
             "Return ONLY the entry text, no heading or date."
         )
 
-    entry_text = llm_complete(config, prompt, max_tokens=300, temperature=0.7)
+    try:
+        entry_text = llm_complete(config, prompt, max_tokens=300, temperature=0.7)
+    except Exception as e:
+        logger.warning(f"Changelog generation fell back to deterministic text: {e}")
+        return _fallback_changelog_entry(issue, changes, success, error=error)
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     status_emoji = "+" if success else "x"
 
@@ -740,6 +770,28 @@ def generate_changelog_entry(config, issue, changes: dict[str, str], success: bo
 
     print(f"Changelog entry generated: {entry_text[:100]}...")
     return entry
+
+
+def _fallback_changelog_entry(issue, changes: dict[str, str], success: bool, error: str | None = None) -> str:
+    """Build a deterministic changelog entry when the LLM is unavailable."""
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    status_emoji = "+" if success else "x"
+    changed_files = ", ".join(changes.keys()) if changes else "none"
+    if success:
+        body = (
+            f"I completed a mutation run for #{issue.number}. "
+            f"I changed {changed_files} and left a concrete update in the repository."
+        )
+    else:
+        body = (
+            f"I attempted a mutation run for #{issue.number}, but it failed. "
+            f"Primary error: {error or 'unknown error'}."
+        )
+    return (
+        f"## [{status_emoji}] #{issue.number} — {issue.title}\n"
+        f"**{date_str}** | Files: {changed_files}\n\n"
+        f"{body}\n\n---\n\n"
+    )
 
 
 def write_changelog_entry(config, issue, changes: dict[str, str], success: bool, error: str | None = None):
@@ -784,6 +836,7 @@ def build_prompt(issue, repo_files: list[str]) -> str:
     task_label = "GitHub issue"
     if is_autonomous_issue(issue):
         task_label = "autonomous roadmap task"
+    success_criteria = _extract_issue_success_criteria(issue.body or "")
     parts = [
         f"## Task\n\nImplement the following {task_label}:\n\n"
         f"**#{issue.number}: {issue.title}**\n\n{issue.body or '(no description)'}\n\n",
@@ -791,13 +844,50 @@ def build_prompt(issue, repo_files: list[str]) -> str:
     ]
     for path in repo_files:
         parts.append(f"- `{path}`\n")
+    if success_criteria:
+        parts.append("\n## Run Checklist\n\n")
+        parts.append(
+            "Satisfy at least one of these success criteria concretely in this run:\n"
+        )
+        for item in success_criteria:
+            parts.append(f"- {item}\n")
     parts.append(
         "\n\nUse the `read_file` tool to examine any files you need. "
-        "Use the `write_file` tool to make your changes. "
+        "Prefer `edit_file` for targeted changes. "
+        "Use `write_file` when creating a new file or replacing a file wholesale is clearly simpler. "
         "Use `list_files` to explore directories.\n\n"
+        "This run only succeeds if you make at least one concrete file change. "
+        "Do not spend all turns exploring. After you have enough context, make the smallest coherent edit that moves the task forward. "
+        "If the full task is too large, implement one concrete slice that clearly advances it and leaves behind a useful artifact.\n\n"
         "When you are done making all changes, respond with a summary of what you did."
     )
     return "".join(parts)
+
+
+def _build_progress_nudge(turn: int, max_turns: int, issue) -> str:
+    """Push the model to stop exploring and commit a minimal edit."""
+    task_type = "autonomous mutation" if is_autonomous_issue(issue) else "mutation"
+    turns_left = max_turns - turn
+    success_criteria = _extract_issue_success_criteria(issue.body or "")
+    urgency = (
+        "You are close to the turn limit."
+        if turns_left <= 2
+        else "You have spent multiple turns gathering context without making an edit."
+    )
+    message = (
+        f"{urgency} This {task_type} run fails if no files are changed.\n"
+        "Stop exploring unless one final read is essential. "
+        "Prefer a targeted `edit_file` change over a broad rewrite. "
+        "If `edit_file` is blocked, use `write_file` only for the smallest viable new artifact or replacement. "
+        "Choose the smallest viable slice now, "
+        "and leave behind a concrete improvement."
+    )
+    if success_criteria:
+        message += (
+            "\nSatisfy at least one success criterion concretely in this run, for example: "
+            f"{success_criteria[0]}"
+        )
+    return message
 
 def get_repo_file_list() -> list[str]:
     """Get a list of tracked files in the repo."""
@@ -865,6 +955,7 @@ def _run_agent_groq(issue, repo_files: list[str], config: dict, system_prompt: s
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt_text},
     ]
+    nudge_turns = {max(2, config["max_turns"] // 3), max(2, config["max_turns"] - 1)}
 
     with TimeoutHandler(timeout_seconds) as timeout_handler:
         for turn in range(config["max_turns"]):
@@ -925,6 +1016,11 @@ def _run_agent_groq(issue, repo_files: list[str], config: dict, system_prompt: s
                     "name": tool_call.function.name,
                     "content": result,
                 })
+
+            if not get_file_changes() and (turn + 1) in nudge_turns:
+                nudge = _build_progress_nudge(turn + 1, config["max_turns"], issue)
+                print(f"  Nudge: {nudge}")
+                messages.append({"role": "user", "content": nudge})
         else:
             logger.warning("Agent reached max turns without finishing.")
 
@@ -1081,6 +1177,7 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
         {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
         {"role": "user", "content": prompt_text},
     ]
+    nudge_turns = {max(2, config["max_turns"] // 3), max(2, config["max_turns"] - 1)}
 
     loop_start = time.time()
     with TimeoutHandler(timeout_seconds) as timeout_handler:
@@ -1125,7 +1222,17 @@ def _run_agent_ollama(issue, repo_files: list[str], config: dict, system_prompt:
             else:
                 # No tool call — model is done
                 print(f"Agent summary: {content[:200]}...")
+                if not get_file_changes() and (turn + 1) in nudge_turns:
+                    nudge = _build_progress_nudge(turn + 1, config["max_turns"], issue)
+                    print(f"  Nudge: {nudge}")
+                    messages.append({"role": "user", "content": nudge})
+                    continue
                 break
+
+            if not get_file_changes() and (turn + 1) in nudge_turns:
+                nudge = _build_progress_nudge(turn + 1, config["max_turns"], issue)
+                print(f"  Nudge: {nudge}")
+                messages.append({"role": "user", "content": nudge})
 
             turn_elapsed = time.time() - turn_start
             print(f"  Turn total: {turn_elapsed:.1f}s")
