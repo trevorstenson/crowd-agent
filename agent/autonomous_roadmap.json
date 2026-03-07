@@ -4,7 +4,7 @@
   "tasks": [
     {
       "id": "capability-benchmark",
-      "track": "observability",
+      "track": "legibility",
       "title": "Add a public capability benchmark and scorecard",
       "priority": 100,
       "status": "pending",
@@ -70,7 +70,7 @@
     },
     {
       "id": "evolution-log",
-      "track": "growth",
+      "track": "virality",
       "title": "Make the agent's evolution more visible to humans",
       "priority": 85,
       "status": "pending",

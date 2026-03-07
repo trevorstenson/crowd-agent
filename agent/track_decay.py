@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterable
 
-DECAY_BUCKETS_MINUTES = (
-    (5, 1.0),
-    (10, 0.5),
-    (15, 0.2),
+DECAY_BUCKETS_DAYS = (
+    (1, 1.0),
+    (3, 0.5),
+    (7, 0.2),
 )
 
 
@@ -20,10 +20,10 @@ def reaction_weight(created_at: datetime, now: datetime | None = None) -> float:
     """Return the current weight for a reaction based on its age."""
     now = ensure_utc(now or datetime.now(timezone.utc))
     created = ensure_utc(created_at)
-    age_minutes = max(0.0, (now - created).total_seconds() / 60.0)
+    age_days = max(0.0, (now - created).total_seconds() / 86400.0)
 
-    for max_age_minutes, weight in DECAY_BUCKETS_MINUTES:
-        if age_minutes < max_age_minutes:
+    for max_age_days, weight in DECAY_BUCKETS_DAYS:
+        if age_days < max_age_days:
             return weight
     return 0.0
 

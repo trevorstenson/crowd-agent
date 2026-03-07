@@ -37,10 +37,10 @@ function netReactions(issue) {
 }
 
 function reactionWeight(createdAt) {
-  const ageMinutes = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / 60000);
-  if (ageMinutes < 5) return 1.0;
-  if (ageMinutes < 10) return 0.5;
-  if (ageMinutes < 15) return 0.2;
+  const ageDays = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / 86400000);
+  if (ageDays < 1) return 1.0;
+  if (ageDays < 3) return 0.5;
+  if (ageDays < 7) return 0.2;
   return 0.0;
 }
 
@@ -196,7 +196,7 @@ function pressureCard(track, issue, reactions = []) {
       <a class="pressure-score" href="${issue.html_url}" target="_blank">${scoreLabel}</a>
     </div>
     <p class="pressure-note">${truncate(issue.body || 'Track issue is live and collecting pressure.', 120)}</p>
-    <p class="pressure-note">Live pressure is time-decayed. Refresh your reaction to keep steering this trait. All-time net: ${rawLabel}</p>
+    <p class="pressure-note">Live pressure decays over time. Refresh your reaction within 7 days to keep steering this trait. All-time net: ${rawLabel}</p>
     <div class="pressure-bar"><span style="width: ${normalized}%"></span></div>
   `;
   return card;

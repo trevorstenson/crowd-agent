@@ -26,11 +26,13 @@ def normalize_track(value: str) -> str:
 
 
 def issue_track(issue) -> str:
+    title = (issue.title or "").strip()
+    if not title.lower().startswith("track:"):
+        return ""
     for label in getattr(issue, "labels", []) or []:
         name = getattr(label, "name", "")
         if name.startswith("track:"):
             return normalize_track(name.split(":", 1)[1])
-    title = (issue.title or "").strip()
     if title.lower().startswith("track:"):
         return normalize_track(title.split(":", 1)[1])
     return ""
@@ -41,7 +43,7 @@ def main():
     now = datetime.now(timezone.utc)
 
     print(f"Track decay debug at {now.isoformat()}")
-    print("Decay buckets: <5m => 1.0, <10m => 0.5, <15m => 0.2, >=15m => 0.0")
+    print("Decay buckets: <1d => 1.0, <3d => 0.5, <7d => 0.2, >=7d => 0.0")
     print()
 
     for issue in repo.get_issues(state="open"):
@@ -69,13 +71,13 @@ def main():
         )
         for reaction in sorted_reactions:
             created_at = reaction.created_at.astimezone(timezone.utc)
-            age_minutes = max(0.0, (now - created_at).total_seconds() / 60.0)
+            age_days = max(0.0, (now - created_at).total_seconds() / 86400.0)
             weight = reaction_weight(created_at, now=now)
             sign = 1.0 if reaction.content == "+1" else -1.0
             contribution = sign * weight
             user = getattr(getattr(reaction, "user", None), "login", "unknown")
             print(
-                f"  {reaction.content:>2} | user={user:<20} | age={age_minutes:>5.1f}m | "
+                f"  {reaction.content:>2} | user={user:<20} | age={age_days:>4.2f}d | "
                 f"weight={weight:>3.1f} | contribution={contribution:>4.1f}"
             )
         print()

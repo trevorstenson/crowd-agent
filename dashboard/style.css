@@ -260,6 +260,17 @@ main {
   gap: 0.9rem;
 }
 
+.pressure-callout {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(154, 123, 36, 0.28);
+  background: linear-gradient(180deg, rgba(240, 232, 200, 0.7), rgba(255, 253, 248, 0.95));
+  color: var(--ink);
+  line-height: 1.55;
+  font-size: 0.9rem;
+}
+
 .pressure-card,
 .roadmap-item,
 .evolution-entry,

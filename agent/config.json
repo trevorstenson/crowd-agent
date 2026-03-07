@@ -1,7 +1,7 @@
 {
   "model": "moonshotai/kimi-k2-instruct-0905",
   "max_tokens": 8096,
-  "max_turns": 10,
+  "max_turns": 20,
   "temperature": 0,
   "error_handling": {
     "max_retries": 3,
