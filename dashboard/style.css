@@ -298,6 +298,18 @@ main {
   font-size: 1.05rem;
 }
 
+.pressure-title-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.pressure-score-stack {
+  display: grid;
+  justify-items: end;
+  color: inherit;
+  text-decoration: none;
+}
+
 .pressure-score,
 .roadmap-priority {
   color: var(--green);
@@ -306,8 +318,72 @@ main {
   white-space: nowrap;
 }
 
+.pressure-score {
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.pressure-score-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
 .pressure-missing {
   color: var(--muted);
+}
+
+.pressure-state {
+  width: fit-content;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pressure-state-surging,
+.pressure-state-active {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: rgba(31, 107, 79, 0.24);
+}
+
+.pressure-state-neutral {
+  background: var(--paper-strong);
+  color: var(--muted);
+}
+
+.pressure-state-fading,
+.pressure-state-suppressed {
+  background: var(--rust-soft);
+  color: var(--rust);
+  border-color: rgba(185, 90, 47, 0.24);
+}
+
+.pressure-note-strong {
+  color: var(--ink);
+}
+
+.pressure-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+
+.pressure-chip {
+  padding: 0.34rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
 }
 
 .pressure-bar {
@@ -323,6 +399,19 @@ main {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--rust), var(--green));
+}
+
+.pressure-link {
+  display: inline-block;
+  margin-top: 0.75rem;
+  color: var(--green);
+  text-decoration: none;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.pressure-link:hover {
+  text-decoration: underline;
 }
 
 .roadmap-list {

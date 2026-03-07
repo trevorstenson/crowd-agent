@@ -52,6 +52,14 @@ function decayedNetReactions(reactions) {
   }, 0);
 }
 
+function pressureState(score) {
+  if (score >= 1.5) return { label: 'surging', sentence: 'Recent reactions are pushing this trait hard right now.' };
+  if (score > 0.2) return { label: 'active', sentence: 'Recent reactions are pushing this trait upward.' };
+  if (score <= -1.5) return { label: 'suppressed', sentence: 'Recent reactions are strongly pushing against this trait.' };
+  if (score < -0.2) return { label: 'fading', sentence: 'Recent reactions are pushing this trait downward.' };
+  return { label: 'neutral', sentence: 'No strong recent pressure is acting on this trait.' };
+}
+
 function shortDate(iso) {
   if (!iso) return 'Never';
   return new Date(iso).toLocaleDateString(undefined, {
@@ -189,15 +197,29 @@ function pressureCard(track, issue, reactions = []) {
   const normalized = Math.max(0, Math.min(100, 50 + decayedScore * 10));
   const scoreLabel = decayedScore > 0 ? `+${decayedScore.toFixed(1)}` : decayedScore.toFixed(1);
   const rawLabel = rawScore > 0 ? `+${rawScore}` : `${rawScore}`;
+  const state = pressureState(decayedScore);
 
   card.innerHTML = `
     <div class="pressure-top">
-      <h3>${track}</h3>
-      <a class="pressure-score" href="${issue.html_url}" target="_blank">${scoreLabel}</a>
+      <div class="pressure-title-group">
+        <h3>${track}</h3>
+        <span class="pressure-state pressure-state-${state.label}">${state.label}</span>
+      </div>
+      <a class="pressure-score-stack" href="${issue.html_url}" target="_blank">
+        <span class="pressure-score">${scoreLabel}</span>
+        <span class="pressure-score-label">Live Pressure</span>
+      </a>
     </div>
-    <p class="pressure-note">${truncate(issue.body || 'Track issue is live and collecting pressure.', 120)}</p>
-    <p class="pressure-note">Live pressure decays over time. Refresh your reaction within 7 days to keep steering this trait. All-time net: ${rawLabel}</p>
+    <p class="pressure-note pressure-note-strong">${state.sentence}</p>
+    <p class="pressure-note">Reactions count fully for 1 day, weaken after 3 days, and fade out after 7 days unless refreshed.</p>
+    <div class="pressure-chips">
+      <span class="pressure-chip">1d full</span>
+      <span class="pressure-chip">3d half</span>
+      <span class="pressure-chip">7d faint</span>
+      <span class="pressure-chip">Historical net ${rawLabel}</span>
+    </div>
     <div class="pressure-bar"><span style="width: ${normalized}%"></span></div>
+    <a class="pressure-link" href="${issue.html_url}" target="_blank">Open track issue to refresh influence</a>
   `;
   return card;
 }
