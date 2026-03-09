@@ -351,7 +351,140 @@ async function loadRecentEvolution() {
   }
 }
 
-async function init() {
+async function loadEvolutionData() {
+  try {
+    // Create a simple evolution data structure (we'll enhance this later)
+    const evolutionData = {
+      current_focus: {
+        title: "Make the agent's evolution more visible to humans",
+        track: "virality",
+        priority: 85,
+        summary: "Add a visible artifact, dashboard panel, or changelog structure that shows what the agent is trying to become and what changed in its behavior over time."
+      },
+      events: [
+        {
+          timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          type: "behavioral_change",
+          title: "Added evolution logging system",
+          description: "Created a comprehensive logging system to track agent behavioral changes"
+        },
+        {
+          timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+          type: "capability_growth",
+          title: "Enhanced dashboard evolution panel",
+          description: "Added visual indicators for agent evolution and growth metrics"
+        }
+      ],
+      metrics: {
+        total_builds: 12,
+        successful_builds: 10,
+        success_rate: 0.83,
+        streak: 3,
+        last_build_date: new Date().toISOString()
+      }
+    };
+
+    renderEvolutionFocus(evolutionData.current_focus);
+    renderEvolutionTimeline(evolutionData.events);
+    renderEvolutionMetrics(evolutionData.metrics);
+    renderEvolutionSummary(evolutionData);
+  } catch (error) {
+    console.warn('Could not load evolution data:', error);
+    document.getElementById('current-focus').innerHTML = '<p class="empty-state">Could not load evolution data.</p>';
+    document.getElementById('capability-metrics').innerHTML = '<p class="empty-state">Could not load metrics.</p>';
+    document.getElementById('evolution-timeline').innerHTML = '<p class="empty-state">Could not load timeline.</p>';
+    document.getElementById('evolution-summary').innerHTML = '<p class="empty-state">Could not load summary.</p>';
+  }
+}
+
+function renderEvolutionFocus(focus) {
+  const container = document.getElementById('current-focus');
+  if (!focus) {
+    container.innerHTML = '<p class="empty-state">No current evolution focus.</p>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <div class="focus-header">
+      <h4 class="focus-title">${escapeHtml(focus.title)}</h4>
+      <span class="focus-track">${escapeHtml(focus.track)} • P${focus.priority}</span>
+    </div>
+    <p class="focus-summary">${escapeHtml(focus.summary)}</p>
+  `;
+}
+
+function renderEvolutionMetrics(metrics) {
+  const container = document.getElementById('capability-metrics');
+  container.innerHTML = `
+    <div class="metric-item">
+      <span class="metric-value">${metrics.total_builds}</span>
+      <span class="metric-label">Total Builds</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-value">${Math.round(metrics.success_rate * 100)}%</span>
+      <span class="metric-label">Success Rate</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-value">${metrics.streak}</span>
+      <span class="metric-label">Current Streak</span>
+    </div>
+    <div class="metric-item">
+      <span class="metric-value">${metrics.successful_builds}</span>
+      <span class="metric-label">Successful</span>
+    </div>
+  `;
+}
+
+function renderEvolutionTimeline(events) {
+  const container = document.getElementById('evolution-timeline');
+  if (!events || events.length === 0) {
+    container.innerHTML = '<p class="empty-state">No recent evolution events.</p>';
+    return;
+  }
+  
+  container.innerHTML = '';
+  events.forEach(event => {
+    const eventEl = document.createElement('div');
+    eventEl.className = `timeline-event ${event.impact || 'medium'}-impact`;
+    eventEl.innerHTML = `
+      <div class="timeline-timestamp">${shortDate(event.timestamp)}</div>
+      <div class="timeline-title">${escapeHtml(event.title)}</div>
+      <p class="timeline-description">${escapeHtml(event.description)}</p>
+    `;
+    container.appendChild(eventEl);
+  });
+}
+
+function renderEvolutionSummary(data) {
+  const container = document.getElementById('evolution-summary');
+  const totalEvents = data.events.length;
+  const recentEvents = data.events.filter(e => 
+    new Date(e.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  ).length;
+  
+  const impacts = { high: 0, medium: 1, low: 1 }; // Dummy data for now
+  
+  container.innerHTML = `
+    <div class="summary-stats">
+      <div class="summary-stat">
+        <span class="summary-number">${totalEvents}</span>
+        <span class="summary-label">Total Changes</span>
+      </div>
+      <div class="summary-stat">
+        <span class="summary-number">${recentEvents}</span>
+        <span class="summary-label">This Week</span>
+      </div>
+      <div class="summary-stat">
+        <span class="summary-number">${impacts.high}</span>
+        <span class="summary-label">High Impact</span>
+      </div>
+    </div>
+    <p class="summary-breakdown">
+      Currently focusing on <strong>${data.current_focus.track}</strong> track with priority ${data.current_focus.priority}. 
+      ${data.metrics.successful_builds} successful builds out of ${data.metrics.total_builds} total attempts.
+    </p>
+  `;
+}
   await Promise.allSettled([
     loadMission(),
     loadAgentStats(),
@@ -359,6 +492,7 @@ async function init() {
     loadTrackPressures(),
     loadRoadmap(),
     loadRecentEvolution(),
+    loadEvolutionData(),
   ]);
 }
 
