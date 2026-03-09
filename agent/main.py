@@ -52,6 +52,7 @@ from checkpoint import (
 )
 from twitter import tweet_build_start, tweet_build_success, tweet_build_failure
 from track_decay import weighted_net_reactions
+from evolution_logger import EvolutionLogger
 
 # --- Logging Setup ---
 
@@ -592,6 +593,18 @@ def create_autonomous_issue(repo, task: dict, roadmap: dict, selection_note: str
         except Exception:
             pass
     print(f"Created autonomous issue #{issue.number}: {task['title']}")
+    
+    # Log the mutation selection
+    try:
+        evolution_logger = EvolutionLogger()
+        evolution_logger.log_mutation_selection(
+            f"[autonomous] {task['title']}",
+            float(task.get('score', 0)),
+            selection_note
+        )
+    except Exception as e:
+        logger.warning(f"Could not log mutation selection: {e}")
+    
     return issue
 
 def select_next_issue(repo):
@@ -1472,6 +1485,24 @@ def main_fresh():
 
         if not changes:
             raise RuntimeError("Agent made no file changes.")
+        
+        # Log successful behavioral changes
+        try:
+            evolution_logger = EvolutionLogger()
+            evolution_logger.log_behavioral_change(
+                "workflow_execution",
+                f"Successfully executed issue #{issue.number}",
+                f"Plan: {plan[:100]}...",
+                f"Changes made to: {', '.join(changes.keys())}"
+            )
+            evolution_logger.log_capability_growth(
+                "successful_builds",
+                memory["successful_builds"],
+                memory["successful_builds"] + 1,
+                "Incremented successful builds counter"
+            )
+        except Exception as e:
+            logger.warning(f"Could not log behavioral changes: {e}")
 
         # Step 7: Generate changelog entry (embedded in PR, written on merge)
         changelog_text = ""
